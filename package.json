@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "NODE_OPTIONS='--no-warnings' tsx server/index.ts",
     "build": "vite build",
-    "start": "NODE_ENV=production NODE_OPTIONS='--no-warnings' tsx server/index.ts",
+    "start": "sh -c '[ -f dist/client/index.html ] || npm run build; NODE_ENV=production NODE_OPTIONS=--no-warnings tsx server/index.ts'",
     "db:init": "NODE_OPTIONS='--no-warnings' tsx server/scripts/init-db.ts",
+    "db:seed-menu": "NODE_OPTIONS='--no-warnings' tsx server/scripts/seed-official-menu.ts",
     "test": "NODE_OPTIONS='--no-warnings' tsx tests/e2e.test.ts"
   },
   "dependencies": {

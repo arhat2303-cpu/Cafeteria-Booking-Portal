@@ -75,8 +75,9 @@ export const ParentDashboard: React.FC = () => {
   // Retry payment on awaiting_payment / failed order
   const [retryingOrderId, setRetryingOrderId] = useState<number | null>(null);
 
-  // QR Modal
+  // QR Modal & Printed Menu Sheet Modal
   const [qrOrderId, setQrOrderId] = useState<number | null>(null);
+  const [showMenuBoardModal, setShowMenuBoardModal] = useState(false);
 
   // Family & Profile Form
   const [profileFullName, setProfileFullName] = useState(user?.fullName || '');
@@ -577,6 +578,25 @@ export const ParentDashboard: React.FC = () => {
         {/* TAB 1: CANTEEN MENU */}
         {activeTab === 'menu' && (
           <div className="space-y-6">
+            {/* ADFSA & ADEK SEHHI Compliance Banner */}
+            <div className="bg-white rounded-2xl border border-emerald-200/90 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-2.5 text-xs sm:text-sm">
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold text-xs tracking-wide">
+                  SEHHI صحّي
+                </span>
+                <span className="font-semibold text-slate-800">
+                  Official Bright Riders School Canteen Menu (ADFSA & ADEK -Compliant)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMenuBoardModal(true)}
+                className="text-xs font-bold text-brs-royal hover:underline"
+              >
+                View Original Printed Menu Sheet →
+              </button>
+            </div>
+
             {/* Search & Category Controls */}
             <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
               <div className="relative flex-1 max-w-md">
@@ -1466,6 +1486,41 @@ export const ParentDashboard: React.FC = () => {
 
       {/* Child Order QR Pass Modal */}
       <QrPassModal orderId={qrOrderId} onClose={() => setQrOrderId(null)} />
+
+      {/* Original Printed Menu Board Modal */}
+      {showMenuBoardModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setShowMenuBoardModal(false)}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-4xl w-full p-4 sm:p-6 shadow-elevated my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">
+                  Bright Riders School — Official Printed Canteen Menu (SEHHI / ADEK)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Reference scan of the school canteen menu board
+                </p>
+              </div>
+              <button
+                onClick={() => setShowMenuBoardModal(false)}
+                className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700"
+              >
+                Close
+              </button>
+            </div>
+            <img
+              src="/menu-photos/official-brs-menu-board.jpg"
+              alt="Official Bright Riders School Canteen Menu"
+              className="w-full max-h-[75vh] object-contain rounded-2xl border border-slate-200 bg-slate-50"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

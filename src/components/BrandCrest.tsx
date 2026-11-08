@@ -6,27 +6,51 @@ export const BrandCrest: React.FC<{ size?: 'sm' | 'md' | 'lg'; lightText?: boole
   size = 'md',
   lightText = false,
 }) => {
-  const boxSize = size === 'sm' ? 'w-9 h-9' : size === 'lg' ? 'w-13 h-13' : 'w-10 h-10';
+  const boxSize = size === 'sm' ? 'w-10 h-10' : size === 'lg' ? 'w-13 h-13' : 'w-11 h-11';
   return (
     <div className="flex items-center gap-3 select-none">
       <div
-        className={`${boxSize} rounded-xl bg-gradient-to-br from-brs-navy via-brs-royal to-brs-blue border border-amber-400/50 flex items-center justify-center shadow-sm shrink-0`}
+        className={`${boxSize} rounded-xl bg-white/95 border border-amber-400/60 flex items-center justify-center shadow-sm shrink-0 p-1`}
       >
-        <svg viewBox="0 0 64 64" className="w-7 h-7" fill="none">
+        {/* Authentic Bright Riders School (BR) Shield + Flaming Torch Emblem */}
+        <svg viewBox="0 0 64 64" className="w-full h-full" fill="none">
+          {/* Flame */}
           <path
-            d="M32 7L52 16V30.5C52 44 43.2 54.5 32 58C20.8 54.5 12 44 12 30.5V16L32 7Z"
-            fill="#163A5F"
-            stroke="#F59E0B"
-            strokeWidth="3"
+            d="M32 3C35 7 39 9.5 38.5 14C38 17.5 34.5 19 32 19C29 19 26 17 26 13.5C26 9.5 30 7.5 32 3Z"
+            fill="#DC2626"
           />
           <path
-            d="M24 21V31C24 33.2 25.8 35 28 35V45H31V21H29V29.5H27.2V21H24Z"
-            fill="#FEF3C7"
+            d="M32.5 7.5C34 10 35.5 11.5 35 14.5C34.5 16.5 33 17.5 31.8 17.5C30.2 17.5 29 16 29.2 14C29.5 11.5 31.5 10 32.5 7.5Z"
+            fill="#FBBF24"
           />
+          {/* Torch Basin */}
+          <rect x="25" y="19" width="14" height="3.5" rx="1.5" fill="#1E293B" />
+          {/* Tri-band Shield (Red | White | Green) */}
+          <clipPath id="brShieldClip">
+            <path d="M12 23H52V38C52 49.5 43.2 57.5 32 60.5C20.8 57.5 12 49.5 12 38V23Z" />
+          </clipPath>
+          <g clipPath="url(#brShieldClip)">
+            <rect x="12" y="23" width="13.4" height="40" fill="#C83E3B" />
+            <rect x="25.3" y="23" width="13.4" height="40" fill="#F8FAFC" />
+            <rect x="38.6" y="23" width="13.5" height="40" fill="#1B7F5C" />
+          </g>
           <path
-            d="M36.5 21C34.4 21 33 23.4 33 27C33 30.2 34.2 32.3 35.8 33V45H39V21H36.5Z"
-            fill="#F59E0B"
+            d="M12 23H52V38C52 49.5 43.2 57.5 32 60.5C20.8 57.5 12 49.5 12 38V23Z"
+            stroke="#1E293B"
+            strokeWidth="2.4"
           />
+          {/* BR Monogram */}
+          <text
+            x="32"
+            y="44"
+            textAnchor="middle"
+            fill="#B48327"
+            fontSize="13.5"
+            fontWeight="800"
+            fontFamily="Georgia, serif"
+          >
+            BR
+          </text>
         </svg>
       </div>
       <div className="leading-tight">
@@ -41,10 +65,10 @@ export const BrandCrest: React.FC<{ size?: 'sm' | 'md' | 'lg'; lightText?: boole
         </div>
         <p
           className={`text-xs font-medium ${
-            lightText ? 'text-amber-300/90' : 'text-amber-700'
+            lightText ? 'text-amber-300/90' : 'text-emerald-700'
           }`}
         >
-          SmartCanteen • Cashless Campus Dining
+          SmartCanteen • ADFSA & ADEK SEHHI
         </p>
       </div>
     </div>

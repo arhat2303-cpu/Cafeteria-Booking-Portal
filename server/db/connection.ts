@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { config } from '../config.js';
+import { seedOfficialBrightRidersMenu } from './official-menu.js';
 
 function normalizeParam(val: unknown): SQLInputValue {
   if (val === undefined || val === null) return null;
@@ -94,6 +95,7 @@ export function initializeSchemaAndDefaults(
     adminPassword?: string;
     demoPassword?: string;
     seedDemoAccounts?: boolean;
+    skipOfficialMenuSeed?: boolean;
   }
 ): { bootstrappedAccounts?: Record<string, { username: string; password: string; role: string }> } {
   const schemaPath = path.resolve(process.cwd(), 'server/db/schema.sql');
@@ -166,6 +168,10 @@ export function initializeSchemaAndDefaults(
 
   for (const [k, v] of defaultSettings) {
     database.run(`INSERT OR IGNORE INTO platform_settings (key, value) VALUES (?, ?)`, k, v);
+  }
+
+  if (!options?.skipOfficialMenuSeed) {
+    seedOfficialBrightRidersMenu(database, false);
   }
 
   // Bootstrap initial accounts only if the database has zero users
