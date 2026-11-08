@@ -2,8 +2,8 @@
 
 This production guide covers all **10 required scenes** using the real **Bright Riders SmartCanteen** web application for school exhibitions and stakeholder presentations.
 
-> **Important Note on Scene 3 (Official Menu Integration):**  
-> In accordance with project rules (*"Do not invent food items or prices"* and *"It must not show imaginary features or screens"*), import the official Bright Riders School Canteen Menu first so Scene 3 and Scene 4 showcase the exact school food items and AED prices.
+> **Official Menu Integrated:**  
+> All **28 official Bright Riders School ADFSA & ADEK SEHHI canteen items** across `BREAKFAST`, `HOT MEALS`, `SNACKS & DESSERT`, and `DRINKS` are loaded directly from the SQLite database in Scene 3 and Scene 4 (`Chicken Tikka (Sandwich / Wrap)` `9 AED`, `Fresh Fruit Cup` `6 AED`, and `Water` `1.5 AED` = `AED 16.50`). The rendered 1920×1080 Full-HD narrated MP4 walkthrough is generated at `deliverables/Bright_Riders_SmartCanteen_Demo_Video.mp4`.
 
 ---
 

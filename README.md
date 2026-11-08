@@ -92,12 +92,20 @@ npm install
 # If omitted, strong local secrets are generated automatically into .env on first start
 cp .env.example .env
 
-# 3. Initialize the SQLite database schema & bootstrap accounts
+# 3. Initialize the SQLite database schema, bootstrap accounts & official 28-item Bright Riders SEHHI menu
 npm run db:init
+npm run db:seed-menu
 
 # 4. Start the unified full-stack development server on http://0.0.0.0:3000
 npm run dev
 ```
+
+### Official Bright Riders School SEHHI Canteen Menu (`server/db/official-menu.ts`)
+All **28 items** and **4 categories** from the official printed **Bright Riders School ADFSA & ADEK SEHHI (Al Thabiah)** canteen sheet are stored dynamically in SQLite (never hardcoded in frontend components) and remain 100% editable by Administrators in **Menu Management**:
+- **BREAKFAST (14 items)**: *Mini Veg pizza* (`3 AED`), *Baked Samosa (Veg / Chicken)* (`3 AED`), *Mini sandwich (Labneh Cucumber, Chicken tikka, Paneer Tikka, Sweet Corn)* (`3 AED`), *Fresh Fruit Cup* (`6 AED`), *Plain Croissant* (`5 AED`), *Chicken Club Sandwich* (`5 AED/pc`), *Fatayer (Cheese / Zaatar)* (`5 AED`), *Fatayer (Chicken Cheese / Labneh Zaatar, Zaatar Cheese)* (`6 AED`), *Pizza Fatayer* (`7 AED`), *Tacos (Veg / Non Veg)* (`7 AED`), *Veg club Toast* (`7 AED/pc`), *Labneh Falafel wraps* (`9 AED`), *Paneer Tikka Wrap* (`9 AED`), *Chicken Tikka (Sandwich / Wrap)* (`9 AED`).
+- **HOT MEALS (7 items)**: *Veg Burger (Baked)* (`10 AED`), *Grilled Chicken Burger* (`10 AED`), *Nuggets Baked (4 PCS)* (`8 AED`), *Veg Fried Rice* (`12 AED`), *Plain Pasta (white / mix sauce)* (`12 AED`), *Chicken /Paneer Curry and Steam Rice* *(price obscured by camera flash glare on source scan — stored unguessed at `0 AED` and marked inactive until set by Admin)*, *Chicken biriyani (less oil)* (`13 AED`).
+- **SNACKS & DESSERT (4 items)**: *Plain Air-Popped Popcorn* (`3 AED`), *Fruit Dessert (Low Fat)* (`9 AED`), *English cake Slice (Saffron / Vanilla)* (`2 AED`), *Low Fat Milk cake (Sugar less)* (`9 AED`).
+- **DRINKS (3 items)**: *Fruit Juice / Milk* (`3 AED`), *Water* (`1.5 AED`), *Laben - up* (`3 AED`).
 
 ---
 

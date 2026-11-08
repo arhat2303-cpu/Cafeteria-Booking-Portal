@@ -604,6 +604,44 @@ async function runTests() {
       reopenedDb.close();
     });
 
+    await step('Verifies Official Bright Riders School SEHHI Menu automatic seeding (28 items, 4 categories)', async () => {
+      const menuDbPath = path.join('/tmp', `brs-official-menu-seed-${Date.now()}.sqlite`);
+      const menuDb = new AppDatabase(menuDbPath);
+      try {
+        initializeSchemaAndDefaults(menuDb);
+        const catCount = menuDb.get<{ count: number }>('SELECT COUNT(*) AS count FROM food_categories')?.count ?? 0;
+        const itemCount = menuDb.get<{ count: number }>('SELECT COUNT(*) AS count FROM menu_items')?.count ?? 0;
+        const activeCount = menuDb.get<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM menu_items WHERE is_available = 1'
+        )?.count ?? 0;
+        assert.equal(catCount, 4);
+        assert.equal(itemCount, 28);
+        assert.equal(activeCount, 27);
+
+        const water = menuDb.get<{ price_fils: number }>('SELECT price_fils FROM menu_items WHERE name = ?', 'Water');
+        assert.equal(water?.price_fils, 150); // 1.5 AED = 150 fils
+
+        const biriyani = menuDb.get<{ price_fils: number }>(
+          'SELECT price_fils FROM menu_items WHERE name = ?',
+          'Chicken biriyani (less oil)'
+        );
+        assert.equal(biriyani?.price_fils, 1300); // 13 AED = 1300 fils
+
+        const glareItem = menuDb.get<{ price_fils: number; is_available: number }>(
+          'SELECT price_fils, is_available FROM menu_items WHERE name = ?',
+          'Chicken /Paneer Curry and Steam Rice'
+        );
+        assert.equal(glareItem?.price_fils, 0);
+        assert.equal(glareItem?.is_available, 0);
+      } finally {
+        menuDb.close();
+        for (const s of ['', '-wal', '-shm']) {
+          const p = `${menuDbPath}${s}`;
+          if (fs.existsSync(p)) fs.unlinkSync(p);
+        }
+      }
+    });
+
     console.log(`\n✓ All ${passed} integration test suites passed cleanly!\n`);
   } finally {
     server.close();
