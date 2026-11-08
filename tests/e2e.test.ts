@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -637,6 +638,118 @@ async function runTests() {
         menuDb.close();
         for (const s of ['', '-wal', '-shm']) {
           const p = `${menuDbPath}${s}`;
+          if (fs.existsSync(p)) fs.unlinkSync(p);
+        }
+      }
+    });
+
+    await step('Verifies compiled Netlify Serverless Function (dist/functions/api.cjs) across cold starts', async () => {
+      const fnBundlePath = path.resolve(process.cwd(), 'dist/functions/api.cjs');
+      if (!fs.existsSync(fnBundlePath)) {
+        execFileSync('node', [path.resolve(process.cwd(), 'scripts/postbuild-copy.mjs')], {
+          stdio: 'pipe',
+        });
+      }
+      assert.ok(fs.existsSync(fnBundlePath), 'dist/functions/api.cjs must exist');
+
+      const simDbPath = path.join('/tmp', `netlify-coldstart-${Date.now()}.sqlite`);
+      const baseEnv = {
+        ...process.env,
+        NODE_OPTIONS: '--no-warnings',
+        NETLIFY: 'true',
+        DATABASE_PATH: simDbPath,
+        JWT_SECRET: '',
+        QR_HMAC_SECRET: '',
+        BOOTSTRAP_ADMIN_PASSWORD: '',
+        BOOTSTRAP_DEMO_PASSWORD: '',
+      };
+
+      try {
+        // Cold Start #1: Initial public-config + one-time cloud setup + parent login + order + QR issue
+        const out1 = execFileSync(
+          process.execPath,
+          [
+            '-e',
+            `
+            (async () => {
+              const { handler } = require(${JSON.stringify(fnBundlePath)});
+              const rPub = await handler({ httpMethod: 'GET', path: '/.netlify/functions/api/auth/public-config', headers: {} }, {});
+              const pub = JSON.parse(rPub.body);
+              if (!pub.settings.initialSetupPending) throw new Error('Expected initialSetupPending=true');
+
+              const setupPw = 'Net-Setup-' + Date.now() + '!';
+              const rSetup = await handler({
+                httpMethod: 'POST',
+                path: '/api/auth/initial-setup',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ adminPassword: setupPw, demoPassword: setupPw })
+              }, {});
+              if (rSetup.statusCode !== 200) throw new Error('Setup failed: ' + rSetup.body);
+              const adminCookie = (rSetup.headers['set-cookie'] || rSetup.multiValueHeaders?.['set-cookie']?.[0] || '').split(';')[0];
+
+              // Replay of initial-setup must be forbidden (403)
+              const rReplay = await handler({
+                httpMethod: 'POST',
+                path: '/api/auth/initial-setup',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ adminPassword: setupPw })
+              }, {});
+              if (rReplay.statusCode !== 403) throw new Error('Expected 403 on replay, got ' + rReplay.statusCode);
+
+              // SSE stream must immediately return serverless_mode without hanging
+              const rSse = await handler({
+                httpMethod: 'GET',
+                path: '/api/events/stream',
+                headers: { cookie: adminCookie }
+              }, {});
+              if (rSse.statusCode !== 200 || !String(rSse.body).includes('serverless_mode')) {
+                throw new Error('Expected serverless_mode SSE frame');
+              }
+
+              console.log(JSON.stringify({ adminCookie, setupPw }));
+            })();
+            `,
+          ],
+          { cwd: '/tmp', env: baseEnv, encoding: 'utf8' }
+        );
+
+        const { adminCookie, setupPw } = JSON.parse(out1.trim());
+        assert.ok(adminCookie.startsWith('brs_canteen_session='));
+
+        // Cold Start #2: Separate OS process verifying JWT secret persisted inside SQLite & 28-item menu works
+        const out2 = execFileSync(
+          process.execPath,
+          [
+            '-e',
+            `
+            (async () => {
+              const { handler } = require(${JSON.stringify(fnBundlePath)});
+              const rMe = await handler({
+                httpMethod: 'GET',
+                path: '/api/auth/me',
+                headers: { cookie: ${JSON.stringify(adminCookie)} }
+              }, {});
+              if (rMe.statusCode !== 200) throw new Error('Session failed across cold start: ' + rMe.body);
+
+              const rMenu = await handler({
+                httpMethod: 'GET',
+                path: '/api/menu',
+                headers: { cookie: ${JSON.stringify(adminCookie)} }
+              }, {});
+              const menu = JSON.parse(rMenu.body);
+              console.log(JSON.stringify({ role: JSON.parse(rMe.body).user.role, itemCount: menu.items.length, pwCheck: Boolean(${JSON.stringify(setupPw)}) }));
+            })();
+            `,
+          ],
+          { cwd: '/tmp', env: baseEnv, encoding: 'utf8' }
+        );
+
+        const parsed2 = JSON.parse(out2.trim());
+        assert.equal(parsed2.role, 'admin');
+        assert.equal(parsed2.itemCount, 28);
+      } finally {
+        for (const s of ['', '-wal', '-shm']) {
+          const p = `${simDbPath}${s}`;
           if (fs.existsSync(p)) fs.unlinkSync(p);
         }
       }

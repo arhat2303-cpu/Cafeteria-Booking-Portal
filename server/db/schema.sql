@@ -308,3 +308,12 @@ CREATE TABLE IF NOT EXISTS admin_activity_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_created ON admin_activity_logs(created_at DESC);
+
+-- 21. Uploaded Food Images (Persists binary uploads across local disk & Netlify serverless deployments)
+CREATE TABLE IF NOT EXISTS uploaded_files (
+  filename TEXT PRIMARY KEY,
+  mime_type TEXT NOT NULL,
+  data BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+

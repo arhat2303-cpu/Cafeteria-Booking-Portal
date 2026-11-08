@@ -35,6 +35,8 @@ function getPlatformPublicSettings() {
     collectionSlots,
     paymentMode: config.isStripeConfigured ? 'stripe' : 'brs_sandbox_aed',
     stripePublishableKey: config.isStripeConfigured ? config.stripePublishableKey : null,
+    initialSetupPending:
+      map.initial_cloud_setup_pending === 'true' && !config.bootstrapAdminPassword,
   };
 }
 
@@ -528,5 +530,98 @@ authRouter.post('/link-child', authenticate, requireRole(['parent']), (req, res)
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'Failed to link student profile.' });
+  }
+});
+
+// One-time Cloud Deployment Password Initialization (only active when deployed without BOOTSTRAP_ADMIN_PASSWORD env var)
+authRouter.post('/initial-setup', async (req, res) => {
+  try {
+    const db = getDb();
+    const pendingRow = db.get<{ value: string }>(
+      `SELECT value FROM platform_settings WHERE key = 'initial_cloud_setup_pending'`
+    );
+
+    if (pendingRow?.value !== 'true' || Boolean(config.bootstrapAdminPassword)) {
+      res.status(403).json({
+        error: 'Initial cloud setup has already been completed for this deployment.',
+      });
+      return;
+    }
+
+    const { adminPassword, demoPassword } = req.body || {};
+    if (!adminPassword || String(adminPassword).length < 8) {
+      res.status(400).json({
+        error: 'Administrator password must be at least 8 characters.',
+      });
+      return;
+    }
+
+    const effectiveDemoPw =
+      demoPassword && String(demoPassword).length >= 8
+        ? String(demoPassword)
+        : String(adminPassword);
+
+    const adminHash = await bcrypt.hash(String(adminPassword), 12);
+    const demoHash = await bcrypt.hash(effectiveDemoPw, 12);
+
+    let adminUserId = 0;
+    db.transaction(() => {
+      const adminRow = db.get<{ id: number }>(
+        `SELECT id FROM users WHERE username = 'admin' AND role = 'admin'`
+      );
+      if (!adminRow) {
+        throw new Error('Bootstrap administrator account not found.');
+      }
+      adminUserId = adminRow.id;
+
+      db.run(
+        `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`,
+        adminHash,
+        adminUserId
+      );
+
+      db.run(
+        `UPDATE users SET password_hash = ?, updated_at = datetime('now')
+         WHERE username IN ('parent.fatima', 'student.zayed', 'student.mariam', 'teacher.anita', 'chef.rashid')`,
+        demoHash
+      );
+
+      db.run(
+        `INSERT OR REPLACE INTO platform_settings (key, value, updated_by, updated_at)
+         VALUES ('initial_cloud_setup_pending', 'false', ?, datetime('now'))`,
+        adminUserId
+      );
+
+      db.run(
+        `INSERT INTO admin_activity_logs (actor_user_id, action, target_type, target_id, details_json, ip_address)
+         VALUES (?, 'INITIAL_CLOUD_SETUP', 'system', '1', ?, ?)`,
+        adminUserId,
+        JSON.stringify({ note: 'One-time cloud deployment credentials initialized' }),
+        req.ip || null
+      );
+    });
+
+    const { token, expiresAt } = createSessionToken({
+      userId: adminUserId,
+      role: 'admin',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    res.cookie(SESSION_COOKIE_NAME, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+      expires: expiresAt,
+      path: '/',
+    });
+
+    res.json({
+      message: 'Cloud deployment credentials initialized! Signed in as Administrator.',
+      user: buildUserAccountPayload(adminUserId),
+      settings: getPlatformPublicSettings(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Initial setup failed.' });
   }
 });

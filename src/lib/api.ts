@@ -57,8 +57,24 @@ export function useRealtimeUpdates(onEvent: (eventType: string, data: any) => vo
 
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let switchedToPolling = false;
+
+    const startServerlessPolling = (intervalMs = 12000) => {
+      if (switchedToPolling) return;
+      switchedToPolling = true;
+      es?.close();
+      es = null;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      pollTimer = setInterval(() => {
+        if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+          callbackRef.current('order.updated', { source: 'poll' });
+        }
+      }, intervalMs);
+    };
 
     const connect = () => {
+      if (switchedToPolling) return;
       es = new EventSource('/api/events/stream', { withCredentials: true });
       const eventTypes = [
         'order.created',
@@ -68,6 +84,17 @@ export function useRealtimeUpdates(onEvent: (eventType: string, data: any) => vo
         'payment.updated',
         'settings.updated',
       ];
+
+      es.addEventListener('serverless_mode', (evt: MessageEvent) => {
+        let interval = 12000;
+        try {
+          const parsed = JSON.parse(evt.data);
+          if (parsed?.pollingIntervalMs) interval = Number(parsed.pollingIntervalMs);
+        } catch {
+          // use default interval
+        }
+        startServerlessPolling(interval);
+      });
 
       for (const evtName of eventTypes) {
         es.addEventListener(evtName, (evt: MessageEvent) => {
@@ -81,6 +108,7 @@ export function useRealtimeUpdates(onEvent: (eventType: string, data: any) => vo
       }
 
       es.onerror = () => {
+        if (switchedToPolling) return;
         es?.close();
         reconnectTimer = setTimeout(connect, 5000);
       };
@@ -90,6 +118,7 @@ export function useRealtimeUpdates(onEvent: (eventType: string, data: any) => vo
 
     return () => {
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (pollTimer) clearInterval(pollTimer);
       es?.close();
     };
   }, [enabled]);

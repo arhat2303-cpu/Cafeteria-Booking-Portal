@@ -67,6 +67,7 @@ export interface PlatformSettings {
   collectionSlots: CollectionSlotOption[];
   paymentMode: 'stripe' | 'brs_sandbox_aed';
   stripePublishableKey?: string | null;
+  initialSetupPending?: boolean;
 }
 
 export interface FoodCategory {

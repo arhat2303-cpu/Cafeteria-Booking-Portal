@@ -1,8 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
-import { config } from '../config.js';
-import { getDb } from '../db/connection.js';
+import { getDb, getEffectiveJwtSecret } from '../db/connection.js';
 
 export type UserRole = 'admin' | 'parent' | 'student' | 'teacher' | 'chef';
 
@@ -53,7 +52,7 @@ export function createSessionToken(params: {
       role: params.role,
       jti,
     },
-    config.jwtSecret,
+    getEffectiveJwtSecret(db),
     { expiresIn: '7d' }
   );
 
@@ -80,13 +79,12 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   }
 
   try {
-    const decoded = jwt.verify(token, config.jwtSecret) as {
+    const db = getDb();
+    const decoded = jwt.verify(token, getEffectiveJwtSecret(db)) as {
       sub: string;
       role: UserRole;
       jti: string;
     };
-
-    const db = getDb();
     const session = db.get<{
       id: number;
       user_id: number;

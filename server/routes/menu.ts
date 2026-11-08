@@ -8,6 +8,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { aedToFils, filsToAed, formatAed } from '../services/money.js';
 import { logAdminActivity } from '../services/audit.js';
 import { eventHub } from '../services/events.js';
+import { config } from '../config.js';
 
 export const menuRouter = Router();
 
@@ -411,10 +412,32 @@ menuRouter.post('/upload-image', authenticate, requireRole(['admin']), (req, res
         return;
       }
 
-      const uploadDir = path.resolve(process.cwd(), 'server/uploads/menu');
-      fs.mkdirSync(uploadDir, { recursive: true });
       const filename = `food-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
-      fs.writeFileSync(path.join(uploadDir, filename), buffer);
+      const mimeMap: Record<'jpg' | 'png' | 'webp', string> = {
+        jpg: 'image/jpeg',
+        png: 'image/png',
+        webp: 'image/webp',
+      };
+
+      // Persist inside SQLite so uploaded images survive Netlify serverless deployments & cold starts
+      const db = getDb();
+      db.run(
+        `INSERT OR REPLACE INTO uploaded_files (filename, mime_type, data) VALUES (?, ?, ?)`,
+        filename,
+        mimeMap[ext],
+        new Uint8Array(buffer)
+      );
+
+      // Also save on local disk when running in a standard stateful server environment
+      if (!config.isServerless) {
+        try {
+          const uploadDir = path.resolve(process.cwd(), 'server/uploads/menu');
+          fs.mkdirSync(uploadDir, { recursive: true });
+          fs.writeFileSync(path.join(uploadDir, filename), buffer);
+        } catch {
+          // Database copy remains primary source of truth
+        }
+      }
 
       responded = true;
       res.status(201).json({ imageUrl: `/uploads/menu/${filename}` });
@@ -435,7 +458,12 @@ menuRouter.post('/upload-image', authenticate, requireRole(['admin']), (req, res
     }
   });
 
-  req.pipe(bb);
+  const rawBody = (req as any).rawBody ?? (Buffer.isBuffer(req.body) ? req.body : null);
+  if (rawBody && Buffer.isBuffer(rawBody)) {
+    bb.end(rawBody);
+  } else {
+    req.pipe(bb);
+  }
 });
 
 // Admin: Add Food Item

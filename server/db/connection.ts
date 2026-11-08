@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { config } from '../config.js';
 import { seedOfficialBrightRidersMenu } from './official-menu.js';
+import { SCHEMA_SQL } from './schema-sql.js';
 
 function normalizeParam(val: unknown): SQLInputValue {
   if (val === undefined || val === null) return null;
@@ -82,12 +83,62 @@ export class AppDatabase {
     }
   }
 
+  checkpointWal(): void {
+    try {
+      this.raw.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch {
+      // Ignore if in-memory DB
+    }
+  }
+
   close(): void {
     this.raw.close();
   }
 }
 
 let singletonDb: AppDatabase | null = null;
+
+export function getEffectiveJwtSecret(database?: AppDatabase): string {
+  if (config.hasExplicitJwtSecret) {
+    return config.jwtSecret;
+  }
+  const db = database || getDb();
+  const row = db.get<{ value: string }>(
+    `SELECT value FROM platform_settings WHERE key = '_internal_jwt_secret'`
+  );
+  if (row?.value) return row.value;
+  const generated = crypto.randomBytes(32).toString('hex');
+  db.run(
+    `INSERT OR IGNORE INTO platform_settings (key, value) VALUES ('_internal_jwt_secret', ?)`,
+    generated
+  );
+  return (
+    db.get<{ value: string }>(
+      `SELECT value FROM platform_settings WHERE key = '_internal_jwt_secret'`
+    )?.value || generated
+  );
+}
+
+export function getEffectiveQrHmacSecret(database?: AppDatabase): string {
+  if (config.hasExplicitQrHmacSecret) {
+    return config.qrHmacSecret;
+  }
+  const db = database || getDb();
+  const row = db.get<{ value: string }>(
+    `SELECT value FROM platform_settings WHERE key = '_internal_qr_hmac_secret'`
+  );
+  if (row?.value) return row.value;
+  const generated = crypto.randomBytes(32).toString('hex');
+  db.run(
+    `INSERT OR IGNORE INTO platform_settings (key, value) VALUES ('_internal_qr_hmac_secret', ?)`,
+    generated
+  );
+  return (
+    db.get<{ value: string }>(
+      `SELECT value FROM platform_settings WHERE key = '_internal_qr_hmac_secret'`
+    )?.value || generated
+  );
+}
 
 export function initializeSchemaAndDefaults(
   database: AppDatabase,
@@ -98,9 +149,7 @@ export function initializeSchemaAndDefaults(
     skipOfficialMenuSeed?: boolean;
   }
 ): { bootstrappedAccounts?: Record<string, { username: string; password: string; role: string }> } {
-  const schemaPath = path.resolve(process.cwd(), 'server/db/schema.sql');
-  const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-  database.exec(schemaSql);
+  database.exec(SCHEMA_SQL);
 
   // Seed default role permission matrix
   const defaultPermissions: Array<[string, string, number, string]> = [
@@ -170,6 +219,10 @@ export function initializeSchemaAndDefaults(
     database.run(`INSERT OR IGNORE INTO platform_settings (key, value) VALUES (?, ?)`, k, v);
   }
 
+  // Ensure persistent signing secrets exist inside SQLite when env vars are not explicitly provided
+  getEffectiveJwtSecret(database);
+  getEffectiveQrHmacSecret(database);
+
   if (!options?.skipOfficialMenuSeed) {
     seedOfficialBrightRidersMenu(database, false);
   }
@@ -177,10 +230,33 @@ export function initializeSchemaAndDefaults(
   // Bootstrap initial accounts only if the database has zero users
   const existingUsers = database.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM users');
   if (existingUsers && existingUsers.cnt > 0) {
+    // If cloud setup was previously pending and BOOTSTRAP_ADMIN_PASSWORD was later supplied via env vars, sync it once
+    const pendingRow = database.get<{ value: string }>(
+      `SELECT value FROM platform_settings WHERE key = 'initial_cloud_setup_pending'`
+    );
+    if (pendingRow?.value === 'true' && config.bootstrapAdminPassword) {
+      const adminHash = bcrypt.hashSync(config.bootstrapAdminPassword, 12);
+      database.run(
+        `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE username = 'admin' AND role = 'admin'`,
+        adminHash
+      );
+      if (config.bootstrapDemoPassword) {
+        const demoHash = bcrypt.hashSync(config.bootstrapDemoPassword, 12);
+        database.run(
+          `UPDATE users SET password_hash = ?, updated_at = datetime('now')
+           WHERE username IN ('parent.fatima', 'student.zayed', 'student.mariam', 'teacher.anita', 'chef.rashid')`,
+          demoHash
+        );
+      }
+      database.run(
+        `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('initial_cloud_setup_pending', 'false')`
+      );
+    }
     return {};
   }
 
   const shouldSeedDemo = options?.seedDemoAccounts ?? config.bootstrapDemoAccounts;
+  const hasExplicitAdminPw = Boolean(options?.adminPassword || config.bootstrapAdminPassword);
   const adminPw =
     options?.adminPassword ||
     config.bootstrapAdminPassword ||
@@ -189,6 +265,12 @@ export function initializeSchemaAndDefaults(
     options?.demoPassword ||
     config.bootstrapDemoPassword ||
     `BRS-Campus-${crypto.randomBytes(4).toString('hex')}!`;
+
+  if (!hasExplicitAdminPw) {
+    database.run(
+      `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('initial_cloud_setup_pending', 'true')`
+    );
+  }
 
   const created: Record<string, { username: string; password: string; role: string }> = {};
 
@@ -328,4 +410,15 @@ export function getDb(): AppDatabase {
 
 export function setDbForTesting(customDb: AppDatabase): void {
   singletonDb = customDb;
+}
+
+export function closeSingletonDb(): void {
+  if (singletonDb) {
+    try {
+      singletonDb.close();
+    } catch {
+      // ignore close errors
+    }
+    singletonDb = null;
+  }
 }

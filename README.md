@@ -127,24 +127,47 @@ npm test
 
 ---
 
-## 7. Production Build & Deployment
+## 7. Deploying to Netlify (Zero-Config Ready)
+
+This repository is pre-configured to deploy out-of-the-box on **Netlify** via [`netlify.toml`](./netlify.toml) and [`.nvmrc`](./.nvmrc):
+
+### How It Works on Netlify
+- **Frontend SPA (`dist/client`)**: Served globally from Netlify's CDN with automatic SPA routing (`/* -> /index.html`).
+- **Backend API (`dist/functions/api.cjs`)**: Compiled during `npm run build` into a self-contained **Node 22 Netlify Function** running Express + built-in `node:sqlite`, routed via `/api/*` and `/uploads/*`.
+- **Automatic Persistent Storage (`@netlify/blobs`)**: On Netlify, the SQLite database (including all 28 official Bright Riders SEHHI menu items, users, orders, payments, QR tokens, and binary food photo uploads) is automatically hydrated from and persisted back to **Netlify Blobs (`consistency: 'strong'`)** — **no external database setup is required**.
+- **Serverless Real-Time Sync**: `/api/events/stream` automatically detects serverless execution and switches dashboards cleanly to lightweight visibility-aware polling so functions never hit gateway timeouts.
+
+### Steps to Deploy on Netlify
+1. Log in to [Netlify](https://app.netlify.com) and click **Add new site → Import an existing project → GitHub**.
+2. Select `arhat2303-cpu/Cafeteria-Booking-Portal` (Netlify automatically reads `netlify.toml`: Build command `npm run build`, Publish directory `dist/client`, Functions directory `dist/functions`, `NODE_VERSION = 22`).
+3. *(Optional)* Under **Site configuration → Environment variables**, you may set:
+   - `BOOTSTRAP_ADMIN_PASSWORD` — Initial password for `admin`
+   - `BOOTSTRAP_DEMO_PASSWORD` — Initial password for showcase accounts (`parent.fatima`, `student.zayed`, `student.mariam`, `teacher.anita`, `chef.rashid`)
+   - `JWT_SECRET` & `QR_HMAC_SECRET` — Custom 64-character random hex signing keys (if omitted, strong keys are generated once and persisted inside the database automatically)
+   - `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` — Optional live/test UAE AED Stripe credentials
+4. Click **Deploy site**.
+   - If you deployed **without** setting `BOOTSTRAP_ADMIN_PASSWORD`, simply open your live `https://<your-site>.netlify.app` URL — a one-time **First-Time Cloud Deployment Setup** card lets you set your Admin & Showcase passwords right in the browser and permanently locks itself once completed!
+
+---
+
+## 8. Self-Hosted / VM Production Build & Deployment
 
 ```bash
-# Compile TypeScript check & build optimized Vite client bundle into dist/client
+# Compile TypeScript check & build optimized Vite client + Netlify function bundle
 npx tsc --noEmit
 npm run build
 
-# Run production server
+# Run stateful Node.js production server on port 3000
 npm start
 ```
 
-For production deployment at Bright Riders School:
+For dedicated VM / container deployment at Bright Riders School:
 1. Provision a Linux VM or container running **Node.js 22 LTS** behind HTTPS (`Nginx` / `Caddy` / Cloud Load Balancer) — HTTPS is required by browsers to enable WebRTC camera access (`getUserMedia`) on Chef tablets and phones.
 2. Mount a persistent volume for `server/data/` (SQLite WAL database) and `server/uploads/menu/` (uploaded food images), and schedule daily `sqlite3 .backup` snapshots.
 3. Configure strong `JWT_SECRET`, `QR_HMAC_SECRET`, and live UAE `STRIPE_SECRET_KEY` values in `.env`.
 
 ---
 
-## 8. Additional Documentation
+## 9. Additional Documentation
 - [`docs/API_REFERENCE.md`](./docs/API_REFERENCE.md) — Complete REST & SSE API endpoint reference
 - [`docs/DEMONSTRATION_VIDEO_GUIDE.md`](./docs/DEMONSTRATION_VIDEO_GUIDE.md) — Complete 10-Scene Exhibition Demonstration Video Storyboard, Narration Script & Recording Guide

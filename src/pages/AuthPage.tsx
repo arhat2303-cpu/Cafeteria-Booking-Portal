@@ -11,15 +11,23 @@ import {
   ChefHat,
   BookOpen,
   ArrowRight,
+  PlayCircle,
+  Download,
+  X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { BrandCrest } from '@/components/BrandCrest';
+import { apiFetch } from '@/lib/api';
 
 export const AuthPage: React.FC = () => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [showPw, setShowPw] = useState(false);
+  const [showDemoVideo, setShowDemoVideo] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [setupAdminPw, setSetupAdminPw] = useState('');
+  const [setupDemoPw, setSetupDemoPw] = useState('');
+  const [settingUpCloud, setSettingUpCloud] = useState(false);
 
   // Login fields
   const [username, setUsername] = useState('');
@@ -35,8 +43,32 @@ export const AuthPage: React.FC = () => {
   const [studentCode, setStudentCode] = useState('');
   const [relationship, setRelationship] = useState('Mother');
 
-  const { login, registerParent, settings } = useAuth();
+  const { login, registerParent, refreshSession, settings } = useAuth();
   const { showToast } = useToast();
+
+  const handleCloudSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSettingUpCloud(true);
+    try {
+      await apiFetch('/api/auth/initial-setup', {
+        method: 'POST',
+        body: JSON.stringify({
+          adminPassword: setupAdminPw,
+          demoPassword: setupDemoPw || setupAdminPw,
+        }),
+      });
+      await refreshSession();
+      showToast(
+        'Cloud Deployment Initialized!',
+        'success',
+        'Admin and campus showcase accounts are now configured.'
+      );
+    } catch (err: any) {
+      showToast('Setup failed', 'error', err.message || 'Could not complete setup.');
+    } finally {
+      setSettingUpCloud(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +135,17 @@ export const AuthPage: React.FC = () => {
               organized.
             </p>
 
+            <div className="mt-5">
+              <button
+                type="button"
+                onClick={() => setShowDemoVideo(true)}
+                className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-sm shadow-lg shadow-amber-500/20 transition"
+              >
+                <PlayCircle className="w-5 h-5" />
+                Watch 10-Scene Demonstration Video (3:58)
+              </button>
+            </div>
+
             {/* Key Capabilities */}
             <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-sm">
@@ -165,6 +208,63 @@ export const AuthPage: React.FC = () => {
       {/* Right Authentication Form Panel */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-10 lg:p-14">
         <div className="w-full max-w-md">
+          {/* One-Time Cloud Deployment Setup Card (only shown when deployed without BOOTSTRAP_ADMIN_PASSWORD env var) */}
+          {settings?.initialSetupPending && (
+            <div className="mb-6 bg-amber-50 border-2 border-amber-300 rounded-3xl p-6 shadow-sm">
+              <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
+                <ShieldCheck className="w-5 h-5 text-amber-600 shrink-0" />
+                First-Time Cloud Deployment Setup
+              </div>
+              <p className="text-xs text-amber-900/80 mt-1.5 leading-relaxed">
+                Welcome to your fresh deployment! Set your initial password for{' '}
+                <code className="font-mono font-semibold">admin</code> and the campus showcase accounts (
+                <code className="font-mono">parent.fatima</code>,{' '}
+                <code className="font-mono">student.zayed</code>,{' '}
+                <code className="font-mono">teacher.anita</code>,{' '}
+                <code className="font-mono">chef.rashid</code>). This one-time card locks permanently
+                once completed.
+              </p>
+              <form onSubmit={handleCloudSetup} className="mt-4 space-y-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-amber-950 mb-1">
+                    Set Administrator Password (min 8 chars)
+                  </label>
+                  <input
+                    type="password"
+                    minLength={8}
+                    required
+                    value={setupAdminPw}
+                    onChange={(e) => setSetupAdminPw(e.target.value)}
+                    placeholder="Choose strong password for 'admin'"
+                    className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-amber-950 mb-1">
+                    Set Showcase Role Accounts Password (optional — defaults to same)
+                  </label>
+                  <input
+                    type="password"
+                    minLength={8}
+                    value={setupDemoPw}
+                    onChange={(e) => setSetupDemoPw(e.target.value)}
+                    placeholder="Leave blank to use same password"
+                    className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={settingUpCloud}
+                  className="w-full py-2.5 rounded-xl bg-brs-navy hover:bg-brs-royal text-white font-semibold text-xs sm:text-sm transition disabled:opacity-60"
+                >
+                  {settingUpCloud
+                    ? 'Initializing Cloud Database...'
+                    : 'Initialize Passwords & Sign In as Admin'}
+                </button>
+              </form>
+            </div>
+          )}
+
           {/* Tab Switcher */}
           <div className="grid grid-cols-2 bg-slate-200/70 p-1 rounded-2xl mb-7">
             <button
@@ -399,6 +499,57 @@ export const AuthPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Exhibition Demonstration Video Modal */}
+      {showDemoVideo && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowDemoVideo(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-3xl max-w-5xl w-full overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-white font-bold text-sm sm:text-base">
+                  Bright Riders School — SmartCanteen Demonstration Video
+                </h3>
+                <p className="text-slate-400 text-xs">
+                  Full-HD 10-Scene Walkthrough • Official ADFSA & ADEK SEHHI Menu • Narrated (3:58)
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href="/Demo_Video/Bright_Riders_SmartCanteen_Demo_Video.mp4"
+                  download="Bright_Riders_SmartCanteen_Demo_Video.mp4"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-semibold text-xs transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download MP4
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowDemoVideo(false)}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  aria-label="Close video player"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="bg-black aspect-video w-full">
+              <video
+                src="/Demo_Video/Bright_Riders_SmartCanteen_Demo_Video.mp4"
+                controls
+                autoPlay
+                playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

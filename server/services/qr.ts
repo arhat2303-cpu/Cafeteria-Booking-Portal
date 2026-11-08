@@ -1,13 +1,12 @@
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
-import { config } from '../config.js';
-import type { AppDatabase } from '../db/connection.js';
+import { getEffectiveQrHmacSecret, type AppDatabase } from '../db/connection.js';
 
 const TOKEN_PREFIX = 'BRSQR.v1';
 
-function signTokenUid(tokenUid: string): string {
+function signTokenUid(tokenUid: string, db?: AppDatabase): string {
   return crypto
-    .createHmac('sha256', config.qrHmacSecret)
+    .createHmac('sha256', getEffectiveQrHmacSecret(db))
     .update(`${TOKEN_PREFIX}.${tokenUid}`)
     .digest('base64url');
 }
@@ -41,7 +40,7 @@ export function issueOrderQrToken(db: AppDatabase, orderId: number): {
   }
 
   const tokenUid = crypto.randomBytes(16).toString('base64url');
-  const signature = signTokenUid(tokenUid);
+  const signature = signTokenUid(tokenUid, db);
   const signedToken = `${TOKEN_PREFIX}.${tokenUid}.${signature}`;
   const tokenHash = hashToken(signedToken);
 
