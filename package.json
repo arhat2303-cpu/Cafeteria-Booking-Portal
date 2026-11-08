@@ -1,0 +1,47 @@
+{
+  "name": "bright-riders-smart-canteen",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bright Riders School - Digital Canteen Ordering & Payment Solution",
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_OPTIONS='--no-warnings' tsx server/index.ts",
+    "build": "vite build",
+    "start": "NODE_ENV=production NODE_OPTIONS='--no-warnings' tsx server/index.ts",
+    "db:init": "NODE_OPTIONS='--no-warnings' tsx server/scripts/init-db.ts",
+    "test": "NODE_OPTIONS='--no-warnings' tsx tests/e2e.test.ts"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "busboy": "^1.6.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "jsqr": "^1.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.460.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "stripe": "^17.3.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/busboy": "^1.5.4",
+    "@types/cookie-parser": "^1.4.7",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.9.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment & Secrets (NEVER commit real credentials)
+.env
+.env.local
+.env.*.local
+
+# Runtime SQLite database files & WAL journals
+server/data/*.sqlite
+server/data/*.sqlite-shm
+server/data/*.sqlite-wal
+tests/*.sqlite
+tests/*.sqlite-shm
+tests/*.sqlite-wal
+
+# Runtime uploaded images (keep .gitkeep)
+server/uploads/menu/*
+!server/uploads/menu/.gitkeep
+
+# Logs & OS files
+*.log
+npm-debug.log*
+.DS_Store
+Unselected files/
