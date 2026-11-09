@@ -358,6 +358,14 @@ adminRouter.post('/users', async (req, res) => {
       return;
     }
 
+    if (role === 'admin') {
+      res.status(403).json({ error: 'Only the two permanent administrator accounts are allowed.' });
+      return;
+    }
+    if (/^12345(?:\.(?:student|parent|chef))?$/i.test(String(username).trim())) {
+      res.status(409).json({ error: 'This username is reserved for demo accounts.' });
+      return;
+    }
     if (String(password).length < 8) {
       res.status(400).json({ error: 'Password must be at least 8 characters long.' });
       return;
@@ -510,6 +518,14 @@ adminRouter.put('/users/:id', (req, res) => {
       shift,
     } = req.body || {};
 
+    if (existing.role === 'admin' && (isActive === false || (username && String(username).trim().toLowerCase() !== existing.username.toLowerCase()))) {
+      res.status(403).json({ error: 'Permanent administrators cannot be deactivated or renamed.' });
+      return;
+    }
+    if (username && /^12345(?:\.(?:student|parent|chef))?$/i.test(String(username).trim()) && String(username).trim().toLowerCase() !== existing.username.toLowerCase()) {
+      res.status(409).json({ error: 'This username is reserved for demo accounts.' });
+      return;
+    }
     if (targetId === req.user!.id && isActive === false) {
       res.status(400).json({ error: 'You cannot deactivate your own active administrator account.' });
       return;
@@ -698,6 +714,11 @@ adminRouter.delete('/users/:id', (req, res) => {
     );
     if (!target) {
       res.status(404).json({ error: 'User not found.' });
+      return;
+    }
+
+    if (target.role === 'admin') {
+      res.status(403).json({ error: 'Permanent administrator accounts cannot be deleted.' });
       return;
     }
 

@@ -46,7 +46,7 @@ A complete, production-ready, full-stack cashless school food ordering, digital 
 
 ## 3. Security, Permanent Admin Bootstrap & Zero Demo Content
 
-- **Zero Demo Accounts or Fake Data**: Fresh initialization creates **zero** demo profiles, fake orders, or fake payment transactions. Only the two authorised permanent Bright Riders Administrator accounts (verified strictly via 12-round `bcrypt` hashes) and the official 28-item Bright Riders SEHHI menu are initialized idempotently.
+- **Demo accounts and clean initialization**: Fresh initialization creates two permanent administrators and one demo account for each of Student, Parent and Chef. Select the matching portal and use username `12345`, password `abcd`. Demo accounts are intentionally weak and must not be used for real users or sensitive data. No demo orders or payments are created.
 - **Zero Plaintext Secrets**: No passwords, API keys, or secrets exist in frontend code or committed repository files, and no administrator credentials are ever displayed on the website.
 - **Role-Portal Sign-In Validation & Session Revocation**: `POST /api/auth/login` validates both credentials and the selected role portal (`expectedRole`). Sessions use `HttpOnly`, `SameSite=Lax` cookies backed by `user_sessions`, revoking active sessions immediately upon password reset or account deactivation.
 - **Cryptographic Zero-PII QR Codes**: Every paid order receives a unique `BRSQR.v1.<128-bit-uid>.<hmac-sha256>` token verified with `crypto.timingSafeEqual` and locked inside an atomic SQLite `BEGIN IMMEDIATE` transaction upon collection.
@@ -135,3 +135,9 @@ This repository is pre-configured to deploy out-of-the-box on **Netlify** via [`
    - `QR_HMAC_SECRET` — strong random 64-character secret
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 4. Click **Deploy site** — all 4 role portals, the 2 permanent Administrator accounts, and the 28-item Bright Riders SEHHI menu persist automatically via `@netlify/blobs`.
+
+### Shared database and account reset
+
+Netlify Functions use one strongly consistent Blobs snapshot for both administrators. Storage failures and concurrent writes fail visibly instead of reporting a successful change that was not saved. The account reset runs once, preserving the two permanent administrators and creating three demo profiles. If existing non-admin users have order, payment or collection history, the reset and demo seeding are skipped to protect financial records; consult the function logs and handle the history manually. The deployment must have Netlify Blobs configured with strong consistency. The demo password is intentionally insecure; do not use this setup with real student or financial data.
+
+The snapshot-based serverless storage is not a substitute for a transactional database for live payment processing: a conflict or storage failure after an external payment provider call may require reconciliation. Use a transactional database and payment reconciliation before accepting real payments.

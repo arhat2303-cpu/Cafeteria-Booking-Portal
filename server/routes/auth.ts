@@ -59,7 +59,7 @@ function buildUserAccountPayload(userId: number) {
 
   const base: Record<string, unknown> = {
     id: user.id,
-    username: user.username,
+    username: /^12345\.(student|parent|chef)$/.test(user.username) ? '12345' : user.username,
     fullName: user.full_name,
     email: user.email,
     phone: user.phone,
@@ -195,7 +195,8 @@ authRouter.post('/login', async (req, res) => {
       is_active: number;
     }>(
       'SELECT id, username, password_hash, role, is_active FROM users WHERE username = ?',
-      username.trim()
+      username.trim() === '12345' && ['student', 'parent', 'chef'].includes(expectedRole)
+        ? `12345.${expectedRole}` : username.trim()
     );
 
     if (!user) {
@@ -278,6 +279,10 @@ authRouter.post('/register', async (req, res) => {
     }
 
     const cleanUsername = String(username).trim();
+    if (/^12345(?:\.(?:student|parent|chef))?$/i.test(cleanUsername)) {
+      res.status(409).json({ error: 'This username is reserved for demo accounts.' });
+      return;
+    }
     if (!/^[a-zA-Z0-9._-]{3,40}$/.test(cleanUsername)) {
       res.status(400).json({
         error: 'Username must be 3–40 characters using letters, numbers, dots, underscores, or hyphens.',

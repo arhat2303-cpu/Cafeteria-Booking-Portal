@@ -19,6 +19,8 @@ import path from 'node:path';
 const root = process.cwd();
 const bundle = path.join(root, 'dist', 'functions', 'api.cjs');
 
+let rejectWrites = false;
+let rejectReads = false;
 const blobs = new Map(); // key -> { data: Buffer, metadata?: string }
 const etagOf = () => `"${crypto.randomUUID()}"`;
 
@@ -39,6 +41,13 @@ const mock = http.createServer((req, res) => {
     if (url.pathname.startsWith('/signed/')) {
       const key = decodeURIComponent(url.pathname.slice('/signed/'.length));
       if (method === 'PUT') {
+        if (rejectWrites) { res.writeHead(412).end(); return; }
+        const prior = blobs.get(key);
+        if ((req.headers['if-match'] && req.headers['if-match'] !== prior?.etag) ||
+            (req.headers['if-none-match'] === '*' && prior)) {
+          res.writeHead(412).end();
+          return;
+        }
         const etag = etagOf();
         blobs.set(key, { data: body, etag });
         res.writeHead(200, { etag });
@@ -93,6 +102,7 @@ const mock = http.createServer((req, res) => {
       return;
     }
 
+    if (method === 'GET' && rejectReads) { send(503, { error: 'storage down' }); return; }
     if (method === 'GET' || method === 'PUT') {
       if (method === 'GET' && !blobs.has(key)) {
         send(404, { error: 'blob not found' });
@@ -146,10 +156,14 @@ const lambdaScript = `
 
   const PHASE = process.env.PHASE;
   const login = await call('POST', '/api/auth/login', {
-    username: 'ARHATSHAH8149',
-    password: process.env.ADMIN_ONE_PW,
+    username: PHASE === 'verify' ? 'ruthvikabrs123' : 'ARHATSHAH8149',
+    password: PHASE === 'verify' ? process.env.ADMIN_TWO_PW : process.env.ADMIN_ONE_PW,
     expectedRole: 'admin',
   });
+  if (PHASE === 'conflict' || PHASE === 'outage') {
+    console.log(JSON.stringify({ status: login.statusCode }));
+    return;
+  }
   if (login.statusCode !== 200) {
     throw new Error('LOGIN_FAILED ' + login.statusCode + ' ' + String(login.body).slice(0, 300));
   }
@@ -172,6 +186,13 @@ const lambdaScript = `
     if (created.statusCode !== 201) throw new Error('CREATE_CHEF_FAILED ' + created.body);
   }
 
+  if (PHASE === 'verify') {
+    const created = await call('POST', '/api/admin/users', {
+      role: 'chef', fullName: 'Second Admin Probe', username: 'probe.second',
+      password: 'Probe-Chef#2026!', staffCode: 'BRS-CHF-PROBE2',
+    }, auth);
+    if (created.statusCode !== 201) throw new Error('SECOND_CREATE_FAILED ' + created.body);
+  }
   const users = await call('GET', '/api/admin/users', null, auth);
   if (users.statusCode !== 200) throw new Error('USERS_FAILED ' + users.statusCode + ' ' + users.body);
   const list = JSON.parse(users.body).users || [];
@@ -200,6 +221,7 @@ const runPhase = (phase) =>
         NETLIFY_BLOBS_CONTEXT: context,
         DATABASE_PATH: `/tmp/blobs-probe-${phase}.sqlite`,
         ADMIN_ONE_PW: (process.env.BRS_ADMIN_ONE_PASSWORD || '').trim(),
+        ADMIN_TWO_PW: (process.env.BRS_ADMIN_TWO_PASSWORD || '').trim(),
         NODE_OPTIONS: '--no-warnings',
       },
     });
@@ -236,8 +258,8 @@ const assert = (cond, msg) => {
 };
 
 const adminPw = (process.env.BRS_ADMIN_ONE_PASSWORD || '').trim();
-if (!adminPw) {
-  console.log('\n  - SKIPPED Netlify Blobs snapshot round-trip: set BRS_ADMIN_ONE_PASSWORD to run it.\n');
+if (!adminPw || !process.env.BRS_ADMIN_TWO_PASSWORD) {
+  console.log('\n  - SKIPPED Netlify Blobs snapshot round-trip: set both admin password environment variables to run it.\n');
   mock.close();
   process.exit(0);
 }
@@ -257,11 +279,33 @@ check('Cold start #1 wrote the SQLite snapshot to Netlify Blobs', () => {
 });
 
 const cold2 = await runPhase('verify');
-check('Cold start #2 signs in again (the exact 502 symptom) and sees the same data', () => {
+check('Ruthvika sees Arhat’s user and creates another in a second cold start', () => {
   assert(cold2.usernames.includes('probe.chef'), 'chef account did NOT survive the cold start');
   assert(cold2.usernames.includes('ARHATSHAH8149'), 'permanent admin missing');
   assert(cold2.usernames.includes('ruthvikabrs123'), 'second permanent admin missing');
   assert(cold2.menuCount === 28, `menu lost across cold start: ${cold2.menuCount}`);
+});
+
+const cold3 = await runPhase('verify-back');
+check('Arhat sees Ruthvika’s user in a third cold start', () => {
+  assert(cold3.usernames.includes('probe.chef'), 'first user missing');
+  assert(cold3.usernames.includes('probe.second'), 'second admin’s user missing');
+});
+
+const original = [...blobs.values()][0].data;
+rejectWrites = true;
+const conflict = await runPhase('conflict');
+rejectWrites = false;
+check('Concurrent write conflict is reported without overwriting shared data', () => {
+  assert(conflict.status === 409, `expected 409, got ${conflict.status}`);
+  assert([...blobs.values()][0].data.equals(original), 'snapshot was overwritten');
+});
+rejectReads = true;
+const outage = await runPhase('outage');
+rejectReads = false;
+check('Storage outage does not silently create isolated data', () => {
+  assert(outage.status === 503, `expected 503, got ${outage.status}`);
+  assert([...blobs.values()][0].data.equals(original), 'snapshot changed during outage');
 });
 
 mock.close();

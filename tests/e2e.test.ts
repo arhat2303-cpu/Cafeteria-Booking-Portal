@@ -90,7 +90,7 @@ async function runTests() {
     const anonClient = new TestClient(baseUrl);
 
     // 1. PERMANENT ADMINS & ZERO DEMO CONTENT VERIFICATION
-    await step('Seeds ONLY the 2 permanent Admin accounts (ARHATSHAH8149 & ruthvikabrs123) and zero demo data', async () => {
+    await step('Seeds two permanent admins and one demo account for each non-admin role', async () => {
       // Idempotent repeated initialization must not duplicate accounts
       initializeSchemaAndDefaults(db);
 
@@ -101,7 +101,8 @@ async function runTests() {
         is_active: number;
       }>('SELECT username, role, password_hash, is_active FROM users ORDER BY id ASC');
 
-      assert.equal(allUsers.length, 2, 'Initial DB must contain ONLY the 2 permanent admins');
+      assert.equal(allUsers.length, 5, 'Initial DB must contain two admins and three demo users');
+      assert.deepEqual(allUsers.slice(2).map(u => u.role).sort(), ['chef', 'parent', 'student']);
       assert.equal(allUsers[0].username, 'ARHATSHAH8149');
       assert.equal(allUsers[0].role, 'admin');
       assert.ok(allUsers[0].password_hash.startsWith('$2a$12$'));
@@ -113,6 +114,31 @@ async function runTests() {
       const txnCnt = db.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM payment_transactions')?.cnt ?? -1;
       assert.equal(orderCnt, 0, 'Initial DB must contain zero fake orders');
       assert.equal(txnCnt, 0, 'Initial DB must contain zero fake transactions');
+    });
+
+    await step('Account reset runs once and retains financial history when reset is unsafe', async () => {
+      const legacy = new AppDatabase(':memory:');
+      initializeSchemaAndDefaults(legacy);
+      legacy.run("DELETE FROM platform_settings WHERE key = '_accounts_reset_2026_11'");
+      legacy.run("INSERT INTO users (username, password_hash, full_name, role) VALUES ('olduser', 'hash', 'Old User', 'parent')");
+      initializeSchemaAndDefaults(legacy);
+      assert.equal(legacy.get("SELECT id FROM users WHERE username = 'olduser'"), undefined);
+      legacy.run("INSERT INTO users (username, password_hash, full_name, role) VALUES ('newuser', 'hash', 'New User', 'parent')");
+      initializeSchemaAndDefaults(legacy);
+      assert.ok(legacy.get("SELECT id FROM users WHERE username = 'newuser'"));
+      const student = legacy.get<{ id: number }>("SELECT id FROM users WHERE username = '12345.student'")!;
+      legacy.run(`INSERT INTO orders (order_number, placed_by_user_id, beneficiary_user_id, order_date, collection_slot, subtotal_fils, total_fils)
+        VALUES ('old-order', ?, ?, '2026-11-08', 'lunch', 100, 100)`, student.id, student.id);
+      legacy.run("DELETE FROM platform_settings WHERE key = '_accounts_reset_2026_11'");
+      // Simulate a pre-migration snapshot without demo accounts colliding with the seed.
+      // History references a real user in this fixture, so the reset should remain blocked.
+      legacy.run("UPDATE users SET username = 'former.student' WHERE id = ?", student.id);
+      legacy.run("DELETE FROM users WHERE username IN ('12345.parent', '12345.chef')");
+      initializeSchemaAndDefaults(legacy);
+      assert.ok(legacy.get("SELECT id FROM users WHERE username = 'newuser'"));
+      assert.ok(legacy.get("SELECT id FROM orders WHERE order_number = 'old-order'"));
+      assert.equal(legacy.get<{ value: string }>("SELECT value FROM platform_settings WHERE key = '_accounts_reset_2026_11'")?.value, 'blocked_history');
+      legacy.close();
     });
 
     // Create an ephemeral test-only admin inside the isolated test DB so no permanent admin password is stored in test source
@@ -143,6 +169,17 @@ async function runTests() {
         expectedRole: 'student',
       });
       assert.equal(wrongCard.status, 403);
+    });
+
+    await step('Demo credentials work in each matching portal and not the admin portal', async () => {
+      for (const role of ['student', 'parent', 'chef']) {
+        const login = await anonClient.request('POST', '/api/auth/login', { username: '12345', password: 'abcd', expectedRole: role });
+        assert.equal(login.status, 200, `demo ${role}`);
+        assert.equal(login.data.user.role, role);
+        assert.equal(login.data.user.username, '12345');
+      }
+      const adminDemo = await anonClient.request('POST', '/api/auth/login', { username: '12345', password: 'abcd', expectedRole: 'admin' });
+      assert.equal(adminDemo.status, 401);
     });
 
     let activeStudentId = 0;
@@ -605,6 +642,7 @@ async function runTests() {
         ...process.env,
         NODE_OPTIONS: '--no-warnings',
         NETLIFY: 'true',
+        BRS_ALLOW_EPHEMERAL_TEST_DB: '1',
         DATABASE_PATH: simDbPath,
         JWT_SECRET: '',
         QR_HMAC_SECRET: '',
@@ -638,7 +676,7 @@ async function runTests() {
             body: JSON.stringify({ username, password, expectedRole: 'admin' }),
           });
 
-          const HAS_CREDS = Boolean(PASSWORD_ONE && PASSWORD_TWO);
+          const HAS_CREDS = Boolean(process.env.BRS_ADMIN_ONE_PASSWORD && process.env.BRS_ADMIN_TWO_PASSWORD);
           if (!HAS_CREDS) {
             // No live credentials supplied: still prove the function boots and answers cleanly
             // WITHOUT node:sqlite (the exact production 502 cause), and that auth rejects cleanly.
@@ -650,7 +688,7 @@ async function runTests() {
             return;
           }
 
-          const login = await call(loginEvent('ARHATSHAH8149', PASSWORD_ONE));
+          const login = await call(loginEvent('ARHATSHAH8149', process.env.BRS_ADMIN_ONE_PASSWORD));
           if (login.statusCode !== 200) {
             throw new Error('LOGIN_FAILED status=' + login.statusCode + ' body=' + login.body);
           }
@@ -693,7 +731,7 @@ async function runTests() {
             httpMethod: 'POST',
             path: '/.netlify/functions/api/auth/login',
             headers: { 'content-type': 'application/json' },
-            body: Buffer.from(JSON.stringify({ username: 'ruthvikabrs123', password: PASSWORD_TWO })).toString('base64'),
+            body: Buffer.from(JSON.stringify({ username: 'ruthvikabrs123', password: process.env.BRS_ADMIN_TWO_PASSWORD })).toString('base64'),
             isBase64Encoded: true,
           });
           if (login2.statusCode !== 200) {
@@ -713,9 +751,7 @@ async function runTests() {
           console.error('LAMBDA_PROBE_FAILED: ' + err.message);
           process.exit(1);
         });
-      `.replace('BUNDLE', JSON.stringify(fnBundlePath))
-       .replace('PASSWORD_ONE', JSON.stringify(process.env.BRS_ADMIN_ONE_PASSWORD || ''))
-       .replace('PASSWORD_TWO', JSON.stringify(process.env.BRS_ADMIN_TWO_PASSWORD || ''));
+      `.replace('BUNDLE', JSON.stringify(fnBundlePath));
 
       try {
         const out = execFileSync(process.execPath, ['-e', lambdaProbe], {
@@ -745,10 +781,10 @@ async function runTests() {
         const menuCnt = persisted.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM menu_items')?.cnt;
         persisted.close();
 
-        assert.equal(users.length, 2);
+        assert.equal(users.length, 5);
         assert.equal(users[0].username, 'ARHATSHAH8149');
         assert.equal(users[1].username, 'ruthvikabrs123');
-        assert.equal(users.every((u) => u.role === 'admin'), true);
+        assert.equal(users.filter((u) => u.role === 'admin').length, 2);
         assert.equal(Number(menuCnt), 28);
       } finally {
         for (const s of ['', '-wal', '-shm']) {

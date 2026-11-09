@@ -36,6 +36,7 @@ Module._load = function (request) {
 };
 
 process.env.NETLIFY = 'true';
+process.env.BRS_ALLOW_EPHEMERAL_TEST_DB = '1';
 process.env.DATABASE_PATH = `/tmp/ui-login-${process.pid}.sqlite`;
 process.env.PUBLIC_APP_URL = baseUrl;
 

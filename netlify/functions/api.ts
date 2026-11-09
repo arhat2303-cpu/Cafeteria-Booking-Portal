@@ -11,113 +11,36 @@ const BLOB_STORE_NAME = 'bright-riders-smartcanteen';
 // Versioned key: the earlier deployment wrote a 5-role (pre-Student/Parent/Chef/Admin) snapshot.
 const BLOB_DB_KEY = 'canteen-v2-4roles.sqlite';
 
-let lastKnownEtag: string | null = null;
-let cacheWarm = false;
-
-/**
- * Netlify injects `NETLIFY_BLOBS_CONTEXT` into deployed Functions, so `getStore()` works
- * without extra wiring. `consistency` is requested per-operation below so that we degrade
- * gracefully when the runtime does not expose an uncached edge URL.
- */
+// Every request reads the shared snapshot. Never silently fall back to isolated /tmp data.
 function resolveBlobStore(): Store | null {
+  try { return getStore({ name: BLOB_STORE_NAME }); } catch { return null; }
+}
+
+class SnapshotConflict extends Error {}
+
+async function readSnapshot(store: Store): Promise<{ bytes: Uint8Array | null; etag: string | null }> {
+  let snapshot;
   try {
-    return getStore({ name: BLOB_STORE_NAME });
-  } catch {
-    return null;
+    snapshot = await store.getWithMetadata(BLOB_DB_KEY, { type: 'arrayBuffer', consistency: 'strong' });
+  } catch (err: any) {
+    // The external Netlify API may return 404 while resolving a signed URL.
+    if (err?.status === 404) return { bytes: null, etag: null };
+    throw err;
   }
+  if (!snapshot) return { bytes: null, etag: null };
+  const data = snapshot.data as ArrayBuffer;
+  if (!data?.byteLength || !snapshot.etag) throw new Error('Invalid database snapshot or missing ETag.');
+  return { bytes: new Uint8Array(data), etag: snapshot.etag };
 }
 
-async function readSnapshot(
-  store: Store
-): Promise<{ bytes: Uint8Array | null; etag: string | null }> {
-  let lastErr: unknown = null;
-  for (const consistency of ['strong', 'eventual'] as const) {
-    try {
-      const snapshot = await store.getWithMetadata(BLOB_DB_KEY, {
-        type: 'arrayBuffer',
-        consistency,
-      });
-      if (!snapshot) return { bytes: null, etag: null };
-      const data = snapshot.data as ArrayBuffer | null;
-      return {
-        bytes: data && data.byteLength > 0 ? new Uint8Array(data) : null,
-        etag: snapshot.etag ?? null,
-      };
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr;
+async function persistDatabase(store: Store, bytes: Uint8Array, etag: string | null): Promise<void> {
+  const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const result = await store.set(BLOB_DB_KEY, data, etag ? { onlyIfMatch: etag } : { onlyIfNew: true });
+  if (!result.modified) throw new SnapshotConflict('The shared database changed; please retry the request.');
 }
 
-async function hydrateDatabase(store: Store | null): Promise<void> {
-  await ensureSqlEngine();
-
-  if (!store) {
-    getDb();
-    return;
-  }
-
-  try {
-    const { bytes, etag } = await readSnapshot(store);
-
-    if (!bytes) {
-      // First run on this store: bootstrap the schema, 2 permanent admins and the 28-item menu.
-      const db = hydrateSingletonFromBytes(null);
-      cacheWarm = true;
-      lastKnownEtag = etag;
-      await persistDatabase(store, db.exportBytes());
-      return;
-    }
-
-    if (cacheWarm && etag && etag === lastKnownEtag) {
-      // Warm container with unchanged remote state — keep the in-memory database.
-      getDb();
-      return;
-    }
-
-    hydrateSingletonFromBytes(bytes);
-    cacheWarm = true;
-    lastKnownEtag = etag;
-  } catch {
-    // Never let persistence availability break sign-in or the API surface.
-    try {
-      getDb();
-    } catch {
-      hydrateSingletonFromBytes(null);
-      cacheWarm = true;
-    }
-  }
-}
-
-async function persistDatabase(store: Store | null, bytesOverride?: Uint8Array): Promise<void> {
-  if (!store) return;
-  try {
-    const bytes = bytesOverride ?? getDb().exportBytes();
-    const arrayBuffer = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength
-    ) as ArrayBuffer;
-
-    // Optimistic concurrency: only overwrite the snapshot we last observed.
-    if (lastKnownEtag) {
-      try {
-        const result = await store.set(BLOB_DB_KEY, arrayBuffer, {
-          onlyIfMatch: lastKnownEtag,
-        });
-        if (result?.etag) lastKnownEtag = result.etag;
-        if (result?.modified) return;
-      } catch {
-        // fall through to an unconditional write
-      }
-    }
-
-    const written = await store.set(BLOB_DB_KEY, arrayBuffer);
-    if (written?.etag) lastKnownEtag = written.etag;
-  } catch {
-    // Non-fatal: the request still succeeds even if the snapshot write fails.
-  }
-}
+// Lambda invocations can overlap in one process and share the SQLite singleton.
+let queue: Promise<void> = Promise.resolve();
 
 /**
  * Netlify hands the function the rewritten internal path (/.netlify/functions/api/...)
@@ -173,35 +96,51 @@ const serverlessHandler = serverless(expressApp, {
   },
 });
 
-export const handler = async (event: any, context: any) => {
+async function handleRequest(event: any, context: any) {
   try {
-    if (context && typeof context === 'object') {
-      context.callbackWaitsForEmptyEventLoop = false;
-    }
-
+    if (context && typeof context === 'object') context.callbackWaitsForEmptyEventLoop = false;
     normalizeEventPath(event);
-
+    await ensureSqlEngine();
     const store = resolveBlobStore();
-    await hydrateDatabase(store);
-
-    const response = (await serverlessHandler(event, context)) as any;
-
-    const method = String(
-      event?.httpMethod || event?.requestContext?.http?.method || 'GET'
-    ).toUpperCase();
-    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-      await persistDatabase(store);
+    // Explicit test-only opt-in for bundle harnesses with no Netlify Blobs service.
+    if (!store && process.env.BRS_ALLOW_EPHEMERAL_TEST_DB !== '1') {
+      throw new Error('Shared database storage is unavailable.');
     }
-
+    let snapshot: { bytes: Uint8Array | null; etag: string | null } = { bytes: null, etag: null };
+    if (store) {
+      snapshot = await readSnapshot(store);
+      const db = hydrateSingletonFromBytes(snapshot.bytes);
+      const initialized = db.exportBytes();
+      // Persist first-run / one-time migrations even for GET requests.
+      if (!snapshot.bytes || !Buffer.from(snapshot.bytes).equals(Buffer.from(initialized))) {
+        await persistDatabase(store, initialized, snapshot.etag);
+        snapshot = await readSnapshot(store);
+        if (!snapshot.bytes) throw new Error('Database initialization could not be verified.');
+        hydrateSingletonFromBytes(snapshot.bytes);
+      }
+    } else {
+      getDb();
+    }
+    const response = (await serverlessHandler(event, context)) as any;
+    const method = String(event?.httpMethod || event?.requestContext?.http?.method || 'GET').toUpperCase();
+    if (store && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      await persistDatabase(store, getDb().exportBytes(), snapshot.etag);
+    }
     return response;
   } catch (err: any) {
-    // Always answer with structured JSON (never an unhandled crash → "Request failed with status 502").
+    console.error('Shared database request failed:', err);
     return {
-      statusCode: 500,
+      statusCode: err instanceof SnapshotConflict ? 409 : 503,
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({
-        error: err?.message || 'Internal server error in the Bright Riders Digital Canteen API.',
-      }),
+      body: JSON.stringify({ error: err instanceof SnapshotConflict
+        ? 'The shared database changed while processing your request. Please retry.'
+        : 'The shared canteen database is unavailable. Please contact the administrator.' }),
     };
   }
+}
+
+export const handler = (event: any, context: any) => {
+  const result = queue.then(() => handleRequest(event, context));
+  queue = result.then(() => undefined, () => undefined);
+  return result;
 };

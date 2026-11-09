@@ -384,6 +384,45 @@ export function initializeSchemaAndDefaults(
         );
       }
     }
+
+    // One-time account reset. Refuse to destroy historical financial records implicitly.
+    // A marker makes this a migration, not a recurring deletion of new users.
+    if (!database.get("SELECT value FROM platform_settings WHERE key = '_accounts_reset_2026_11'")) {
+      const historical = database.get<{ cnt: number }>(
+        `SELECT COUNT(*) AS cnt FROM orders WHERE placed_by_user_id IN
+         (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))
+         OR beneficiary_user_id IN
+         (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))`
+      );
+      const otherFinancial = database.get<{ cnt: number }>(
+        `SELECT (SELECT COUNT(*) FROM payment_transactions WHERE user_id IN
+          (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))) +
+          (SELECT COUNT(*) FROM collection_records WHERE verified_by_chef_id IN
+          (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))) AS cnt`
+      );
+      const blocked = Boolean((historical?.cnt || 0) || (otherFinancial?.cnt || 0));
+      if (blocked) {
+        console.error('Account reset skipped: existing financial history must be handled manually.');
+      } else {
+        database.run(`DELETE FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123')`);
+      }
+      if (!blocked) {
+        const demoHash = '$2a$12$xlI8.BfP/dPpZMAcrTbzsem1jp3VA4iavz.I0OnVw34FbeItmUDIe';
+        const ids: Record<string, number> = {};
+        for (const role of ['student', 'parent', 'chef']) {
+          // Internal unique usernames; the public login alias 12345 is resolved by selected portal.
+          ids[role] = database.run(
+            `INSERT INTO users (username, password_hash, full_name, role) VALUES (?, ?, ?, ?)`,
+            `12345.${role}`, demoHash, `Demo ${role[0].toUpperCase()}${role.slice(1)}`, role
+          ).lastInsertRowid;
+        }
+        database.run(`INSERT INTO student_profiles (user_id, student_code, class_name) VALUES (?, 'BRS-DEMO-STUDENT', 'Demo Class')`, ids.student);
+        database.run(`INSERT INTO parent_profiles (user_id) VALUES (?)`, ids.parent);
+        database.run(`INSERT INTO chef_profiles (user_id, staff_code) VALUES (?, 'BRS-DEMO-CHEF')`, ids.chef);
+        database.run(`INSERT INTO parent_student_links (parent_user_id, student_user_id) VALUES (?, ?)`, ids.parent, ids.student);
+      }
+      database.run(`INSERT INTO platform_settings (key, value) VALUES ('_accounts_reset_2026_11', ?)`, blocked ? 'blocked_history' : 'done');
+    }
   });
 }
 

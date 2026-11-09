@@ -46,6 +46,7 @@ Module._load = function (request, parent, isMain) {
 
 // Netlify Functions environment flags (serverless behaviour, /tmp writable storage)
 process.env.NETLIFY = 'true';
+process.env.BRS_ALLOW_EPHEMERAL_TEST_DB = '1';
 process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';
 process.env.DATABASE_PATH = `${process.env.TMPDIR || '/tmp'}/netlify-sim-${process.pid}.sqlite`;
 process.env.PUBLIC_APP_URL = `http://localhost:${port}`;
