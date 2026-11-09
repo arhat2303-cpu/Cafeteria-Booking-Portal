@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
-import { AppDatabase, initializeSchemaAndDefaults, setDbForTesting } from '../server/db/connection.js';
+import { AppDatabase, ensureSqlEngine, initializeSchemaAndDefaults, setDbForTesting } from '../server/db/connection.js';
 import { createApiApp } from '../server/app.js';
 
 const testDbPath = path.resolve(process.cwd(), 'tests/e2e-canteen.sqlite');
@@ -63,6 +63,7 @@ async function runTests() {
   console.log('=== Bright Riders Digital Canteen — End-to-End Integration Test Suite ===\n');
   cleanupTestDb();
 
+  await ensureSqlEngine();
   const db = new AppDatabase(testDbPath);
   initializeSchemaAndDefaults(db);
   setDbForTesting(db);
@@ -587,6 +588,18 @@ async function runTests() {
       }
       assert.ok(fs.existsSync(fnBundlePath), 'dist/functions/api.cjs must exist');
 
+      // Guard: the deployed bundle must NEVER reference `node:sqlite` (the exact cause of the
+      // production HTTP 502 sign-in failure on AWS Lambda runtimes without experimental SQLite).
+      const bundleSource = fs.readFileSync(fnBundlePath, 'utf8');
+      assert.ok(
+        !/require\(["']node:sqlite["']\)/.test(bundleSource),
+        'The serverless bundle must not require node:sqlite'
+      );
+      assert.ok(
+        !/DatabaseSync/.test(bundleSource),
+        'The serverless bundle must not reference the experimental node:sqlite DatabaseSync API'
+      );
+
       const simDbPath = path.join('/tmp', `netlify-coldstart-${Date.now()}.sqlite`);
       const baseEnv = {
         ...process.env,
@@ -597,37 +610,146 @@ async function runTests() {
         QR_HMAC_SECRET: '',
       };
 
+      const lambdaProbe = `
+        (async () => {
+          // Simulate an AWS Lambda runtime (nodejs20.x) where experimental node:sqlite does not exist.
+          const Module = require('node:module');
+          const originalLoad = Module._load;
+          Module._load = function (request, parent, isMain) {
+            if (String(request).includes('sqlite')) {
+              const err = new Error('No such built-in module: node:sqlite');
+              err.code = 'ERR_UNKNOWN_BUILTIN_MODULE';
+              throw err;
+            }
+            return originalLoad.apply(this, arguments);
+          };
+
+          const { handler } = require(BUNDLE);
+
+          const call = (event, context) => handler(Object.assign({ headers: {}, isBase64Encoded: false }, event), context || {});
+
+          const loginEvent = (username, password) => ({
+            httpMethod: 'POST',
+            // Exactly what Netlify passes after the /api/* rewrite: function prefix + stripped splat
+            path: '/.netlify/functions/api/auth/login',
+            rawUrl: 'https://brightriders.netlify.app/api/auth/login',
+            rawQuery: '',
+            headers: { 'content-type': 'application/json', origin: 'https://brightriders.netlify.app' },
+            body: JSON.stringify({ username, password, expectedRole: 'admin' }),
+          });
+
+          const HAS_CREDS = Boolean(PASSWORD_ONE && PASSWORD_TWO);
+          if (!HAS_CREDS) {
+            // No live credentials supplied: still prove the function boots and answers cleanly
+            // WITHOUT node:sqlite (the exact production 502 cause), and that auth rejects cleanly.
+            const health = await call({ httpMethod: 'GET', path: '/.netlify/functions/api/health', headers: {} });
+            if (health.statusCode !== 200) throw new Error('HEALTH_FAILED ' + health.statusCode);
+            const anon = await call({ httpMethod: 'POST', path: '/.netlify/functions/api/auth/login', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'x', password: 'y' }) });
+            if (anon.statusCode !== 401) throw new Error('ANON_LOGIN_STATUS=' + anon.statusCode);
+            console.log(JSON.stringify({ skippedLiveCreds: true, bootOk: true }));
+            return;
+          }
+
+          const login = await call(loginEvent('ARHATSHAH8149', PASSWORD_ONE));
+          if (login.statusCode !== 200) {
+            throw new Error('LOGIN_FAILED status=' + login.statusCode + ' body=' + login.body);
+          }
+          const loginJson = JSON.parse(login.body);
+          if (!loginJson.sessionToken || !loginJson.user || loginJson.user.role !== 'admin') {
+            throw new Error('LOGIN_SHAPE_INVALID ' + login.body);
+          }
+          const setCookie = login.headers['set-cookie'] || login.multiValueHeaders?.['set-cookie'];
+          if (!setCookie) {
+            throw new Error('NO_SESSION_COOKIE_IN_LOGIN_RESPONSE');
+          }
+
+          // Bearer-token path (serverless clients often lose the cookie in iframes/same-site proxies)
+          const me = await call({
+            httpMethod: 'GET',
+            path: '/.netlify/functions/api/auth/me',
+            rawUrl: 'https://brightriders.netlify.app/api/auth/me',
+            headers: { authorization: 'Bearer ' + loginJson.sessionToken },
+          });
+          if (me.statusCode !== 200) {
+            throw new Error('ME_FAILED status=' + me.statusCode + ' body=' + me.body);
+          }
+
+          const badLogin = await call(loginEvent('ARHATSHAH8149', 'definitely-wrong-password'));
+          if (badLogin.statusCode !== 401) {
+            throw new Error('BAD_LOGIN_STATUS=' + badLogin.statusCode);
+          }
+
+          const menu = await call({
+            httpMethod: 'GET',
+            path: '/.netlify/functions/api/menu',
+            rawUrl: 'https://brightriders.netlify.app/api/menu',
+            headers: { authorization: 'Bearer ' + loginJson.sessionToken },
+          });
+          if (menu.statusCode !== 200) throw new Error('MENU_FAILED status=' + menu.statusCode);
+          const menuJson = JSON.parse(menu.body);
+
+          // Second sign-in from a *different* Netlify runtime URL shape (plain function path, no /api prefix)
+          const login2 = await call({
+            httpMethod: 'POST',
+            path: '/.netlify/functions/api/auth/login',
+            headers: { 'content-type': 'application/json' },
+            body: Buffer.from(JSON.stringify({ username: 'ruthvikabrs123', password: PASSWORD_TWO })).toString('base64'),
+            isBase64Encoded: true,
+          });
+          if (login2.statusCode !== 200) {
+            throw new Error('LOGIN2_FAILED status=' + login2.statusCode + ' body=' + login2.body);
+          }
+
+          const admins = JSON.parse(login.body).user;
+          console.log(JSON.stringify({
+            adminOne: admins.fullName || admins.username,
+            adminOneRole: loginJson.user.role,
+            secondAdmin: JSON.parse(login2.body).user.username,
+            menuCount: (menuJson.items || menuJson.menu || []).length,
+            hasSessionToken: Boolean(loginJson.sessionToken),
+            hasCookie: Boolean(setCookie),
+          }));
+        })().catch((err) => {
+          console.error('LAMBDA_PROBE_FAILED: ' + err.message);
+          process.exit(1);
+        });
+      `.replace('BUNDLE', JSON.stringify(fnBundlePath))
+       .replace('PASSWORD_ONE', JSON.stringify(process.env.BRS_ADMIN_ONE_PASSWORD || ''))
+       .replace('PASSWORD_TWO', JSON.stringify(process.env.BRS_ADMIN_TWO_PASSWORD || ''));
+
       try {
-        const out = execFileSync(
-          process.execPath,
-          [
-            '-e',
-            `
-            (async () => {
-              const { handler } = require(${JSON.stringify(fnBundlePath)});
-              const rHealth = await handler({ httpMethod: 'GET', path: '/api/health', headers: {} }, {});
-              if (rHealth.statusCode !== 200) throw new Error('Health check failed');
-
-              const rPub = await handler({ httpMethod: 'GET', path: '/.netlify/functions/api/auth/public-config', headers: {} }, {});
-              if (rPub.statusCode !== 200) throw new Error('Public config failed');
-
-              const { DatabaseSync } = require('node:sqlite');
-              const checkDb = new DatabaseSync(${JSON.stringify(simDbPath)});
-              const admins = checkDb.prepare('SELECT username, role FROM users ORDER BY id ASC').all();
-              const menuCnt = checkDb.prepare('SELECT COUNT(*) as cnt FROM menu_items').get().cnt;
-              checkDb.close();
-              console.log(JSON.stringify({ admins, menuCnt }));
-            })();
-            `,
-          ],
-          { cwd: '/tmp', env: baseEnv, encoding: 'utf8' }
-        );
+        const out = execFileSync(process.execPath, ['-e', lambdaProbe], {
+          cwd: '/tmp',
+          env: baseEnv,
+          encoding: 'utf8',
+        });
 
         const parsed = JSON.parse(out.trim());
-        assert.equal(parsed.admins.length, 2);
-        assert.equal(parsed.admins[0].username, 'ARHATSHAH8149');
-        assert.equal(parsed.admins[1].username, 'ruthvikabrs123');
-        assert.equal(parsed.menuCnt, 28);
+        if (parsed.skippedLiveCreds) {
+          assert.equal(parsed.bootOk, true, 'serverless bundle failed to boot without node:sqlite');
+        } else {
+        assert.equal(parsed.adminOneRole, 'admin');
+        assert.equal(parsed.secondAdmin, 'ruthvikabrs123');
+        assert.equal(parsed.menuCount, 28);
+        assert.equal(parsed.hasSessionToken, true);
+        assert.equal(parsed.hasCookie, true);
+        }
+
+        // Verify persistence of the seeded accounts + menu directly from the produced SQLite bytes
+        // (read through the WASM engine, never node:sqlite).
+        await ensureSqlEngine();
+        const persisted = new AppDatabase(simDbPath);
+        const users = persisted.all<{ username: string; role: string }>(
+          'SELECT username, role FROM users ORDER BY id ASC'
+        );
+        const menuCnt = persisted.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM menu_items')?.cnt;
+        persisted.close();
+
+        assert.equal(users.length, 2);
+        assert.equal(users[0].username, 'ARHATSHAH8149');
+        assert.equal(users[1].username, 'ruthvikabrs123');
+        assert.equal(users.every((u) => u.role === 'admin'), true);
+        assert.equal(Number(menuCnt), 28);
       } finally {
         for (const s of ['', '-wal', '-shm']) {
           const p = `${simDbPath}${s}`;

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, setClientSessionToken } from '@/lib/api';
 import type { PlatformSettings, UserAccount, UserRole } from '@/types';
 
 interface AuthContextValue {
@@ -55,6 +55,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(data.user);
       setSettings(data.settings);
     } catch {
+      setClientSessionToken(null);
       setUser(null);
       try {
         const pub = await apiFetch<{ settings: PlatformSettings }>('/api/auth/public-config');
@@ -88,13 +89,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = useCallback(
     async (username: string, password: string, expectedRole?: UserRole) => {
-      const data = await apiFetch<{ user: UserAccount; settings: PlatformSettings }>(
-        '/api/auth/login',
-        {
-          method: 'POST',
-          body: JSON.stringify({ username, password, expectedRole }),
-        }
-      );
+      const data = await apiFetch<{
+        sessionToken?: string;
+        user: UserAccount;
+        settings: PlatformSettings;
+      }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password, expectedRole }),
+      });
+      if (data.sessionToken) {
+        setClientSessionToken(data.sessionToken);
+      }
       setUser(data.user);
       setSettings(data.settings);
       return data.user;
@@ -103,13 +108,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   const registerParent = useCallback(async (payload: Record<string, unknown>) => {
-    const data = await apiFetch<{ user: UserAccount; settings: PlatformSettings }>(
-      '/api/auth/register',
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }
-    );
+    const data = await apiFetch<{
+      sessionToken?: string;
+      user: UserAccount;
+      settings: PlatformSettings;
+    }>('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (data.sessionToken) {
+      setClientSessionToken(data.sessionToken);
+    }
     setUser(data.user);
     setSettings(data.settings);
     return data.user;
@@ -121,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // ignore
     }
+    setClientSessionToken(null);
     setUser(null);
   }, []);
 
@@ -141,7 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
-export function useAuth() {
+export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
   return ctx;

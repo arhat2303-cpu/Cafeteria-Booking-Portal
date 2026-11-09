@@ -243,14 +243,22 @@ authRouter.post('/login', async (req, res) => {
       userAgent: req.headers['user-agent'],
     });
 
+    const isHttps =
+      req.secure ||
+      String(req.headers['x-forwarded-proto'] || '')
+        .toLowerCase()
+        .includes('https');
+
     res.cookie(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: isHttps ? 'none' : 'lax',
+      secure: isHttps,
       expires: expiresAt,
       path: '/',
     });
 
     res.json({
+      sessionToken: token,
       user: buildUserAccountPayload(user.id),
       settings: getPlatformPublicSettings(),
     });
@@ -339,14 +347,22 @@ authRouter.post('/register', async (req, res) => {
       userAgent: req.headers['user-agent'],
     });
 
+    const isHttps =
+      req.secure ||
+      String(req.headers['x-forwarded-proto'] || '')
+        .toLowerCase()
+        .includes('https');
+
     res.cookie(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: isHttps ? 'none' : 'lax',
+      secure: isHttps,
       expires: expiresAt,
       path: '/',
     });
 
     res.status(201).json({
+      sessionToken: token,
       user: buildUserAccountPayload(newUserId),
       settings: getPlatformPublicSettings(),
     });

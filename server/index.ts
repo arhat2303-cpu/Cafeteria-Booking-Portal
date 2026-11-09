@@ -2,11 +2,11 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
-import { getDb } from './db/connection.js';
+import { ensureSqlEngine, getDb } from './db/connection.js';
 import { createApiApp } from './app.js';
 
 async function startServer() {
-  // Ensure database & schema are initialized
+  await ensureSqlEngine();
   getDb();
 
   const app = createApiApp();

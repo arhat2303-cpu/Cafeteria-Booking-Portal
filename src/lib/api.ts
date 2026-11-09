@@ -1,5 +1,35 @@
 import { useEffect, useRef } from 'react';
 
+const SESSION_STORAGE_KEY = 'brs_canteen_bearer_token';
+let inMemoryToken: string | null = null;
+
+export function getClientSessionToken(): string | null {
+  if (inMemoryToken) return inMemoryToken;
+  try {
+    const saved = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (saved) {
+      inMemoryToken = saved;
+      return saved;
+    }
+  } catch {
+    // sessionStorage unavailable in restricted contexts
+  }
+  return null;
+}
+
+export function setClientSessionToken(token: string | null): void {
+  inMemoryToken = token;
+  try {
+    if (token) {
+      window.sessionStorage.setItem(SESSION_STORAGE_KEY, token);
+    } else {
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export class ApiError extends Error {
   public status: number;
   public data: any;
@@ -20,20 +50,49 @@ export async function apiFetch<T = any>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(endpoint, {
-    ...options,
-    headers,
-    credentials: 'include',
-  });
+  const bearer = getClientSessionToken();
+  if (bearer && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${bearer}`);
+  }
 
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      ...options,
+      headers,
+      credentials: 'include',
+    });
+  } catch {
+    throw new ApiError(
+      'Cannot reach the canteen server. Please check your internet connection and try again.',
+      0
+    );
+  }
+
+  const rawText = await res.text();
+  let data: any = rawText;
   const contentType = res.headers.get('content-type') || '';
-  const data = contentType.includes('application/json') ? await res.json() : await res.text();
+  if (contentType.includes('application/json') || rawText.trim().startsWith('{')) {
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      data = rawText;
+    }
+  }
 
   if (!res.ok) {
-    const errMsg =
-      (data && typeof data === 'object' && (data.error || data.message)) ||
-      `Request failed with status ${res.status}`;
-    throw new ApiError(errMsg, res.status, data);
+    const serverMessage =
+      data && typeof data === 'object' ? (data.error || data.message) : null;
+    // Never surface a bare status code to the user: explain gateway/network failures in plain language.
+    const fallback =
+      res.status === 502 || res.status === 503 || res.status === 504
+        ? 'The canteen server is temporarily unreachable. Please try signing in again in a moment.'
+        : res.status >= 500
+        ? 'The canteen server hit an unexpected problem. Please try again.'
+        : res.status === 404
+        ? 'That service endpoint was not found on the server.'
+        : `Request failed with status ${res.status}`;
+    throw new ApiError(serverMessage || fallback, res.status, data);
   }
 
   return data as T;
@@ -75,7 +134,11 @@ export function useRealtimeUpdates(onEvent: (eventType: string, data: any) => vo
 
     const connect = () => {
       if (switchedToPolling) return;
-      es = new EventSource('/api/events/stream', { withCredentials: true });
+      const bearer = getClientSessionToken();
+      const streamUrl = bearer
+        ? `/api/events/stream?token=${encodeURIComponent(bearer)}`
+        : '/api/events/stream';
+      es = new EventSource(streamUrl, { withCredentials: true });
       const eventTypes = [
         'order.created',
         'order.updated',

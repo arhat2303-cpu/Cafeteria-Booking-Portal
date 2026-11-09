@@ -5,15 +5,19 @@
   "description": "Bright Riders School - Digital Canteen Ordering & Payment Solution",
   "type": "module",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=18.0.0"
   },
   "scripts": {
-    "dev": "NODE_OPTIONS='--no-warnings' tsx server/index.ts",
+    "dev": "tsx server/index.ts",
     "build": "vite build && node scripts/postbuild-copy.mjs",
-    "start": "sh -c '[ -f dist/client/index.html ] || npm run build; NODE_ENV=production NODE_OPTIONS=--no-warnings tsx server/index.ts'",
-    "db:init": "NODE_OPTIONS='--no-warnings' tsx server/scripts/init-db.ts",
-    "db:seed-menu": "NODE_OPTIONS='--no-warnings' tsx server/scripts/seed-official-menu.ts",
-    "test": "NODE_OPTIONS='--no-warnings' tsx tests/e2e.test.ts"
+    "start": "sh -c '[ -f dist/client/index.html ] || npm run build; NODE_ENV=production tsx server/index.ts'",
+    "db:init": "tsx server/scripts/init-db.ts",
+    "db:seed-menu": "tsx server/scripts/seed-official-menu.ts",
+    "test": "tsx tests/e2e.test.ts",
+    "verify:serverless": "node scripts/verify-netlify-bundle.mjs",
+    "verify:blobs": "node scripts/verify-blobs-persistence.mjs",
+    "verify:login-ui": "node scripts/verify-login-ui.mjs",
+    "verify": "npm run build && npm run verify:serverless && npm run verify:blobs && npm run verify:login-ui"
   },
   "dependencies": {
     "@netlify/blobs": "^11.1.8",
@@ -30,6 +34,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
     "serverless-http": "^4.0.0",
+    "sql.js": "^1.15.2",
     "stripe": "^17.3.1"
   },
   "devDependencies": {

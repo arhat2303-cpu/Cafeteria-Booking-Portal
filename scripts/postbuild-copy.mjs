@@ -1,6 +1,9 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const esbuild = require('esbuild');
 
 const root = process.cwd();
 
@@ -20,30 +23,38 @@ if (fs.existsSync(srcVideoDir)) {
   console.log('[build] Copied Demo_Video into dist/client/Demo_Video');
 }
 
-// 2. Compile Netlify Serverless Function into self-contained CommonJS bundle (dist/functions/api.cjs)
-// Using .cjs avoids ESM dynamic-require errors in Express/Busboy under "type": "module" on AWS Lambda Node 22
+// 2. Compile Netlify Serverless Function into a self-contained Node 18/20/22 CommonJS bundle
+// with a dedicated CommonJS package.json so neither ESM dynamic-require errors nor
+// `node:sqlite` runtime crashes can ever occur on AWS Lambda / Netlify Functions.
 const outFnDir = path.join(root, 'dist', 'functions');
+fs.rmSync(outFnDir, { recursive: true, force: true });
 fs.mkdirSync(outFnDir, { recursive: true });
 
-const esbuildBin = path.join(
-  root,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild'
+const stripNodePrefixPlugin = {
+  name: 'strip-node-prefix',
+  setup(build) {
+    build.onResolve({ filter: /^node:/ }, (args) => ({
+      path: args.path.slice(5),
+      external: true,
+    }));
+  },
+};
+
+await esbuild.build({
+  entryPoints: [path.join(root, 'netlify/functions/api.ts')],
+  bundle: true,
+  platform: 'node',
+  target: 'node18',
+  format: 'cjs',
+  plugins: [stripNodePrefixPlugin],
+  outfile: path.join(outFnDir, 'api.cjs'),
+  logLevel: 'warning',
+});
+
+fs.writeFileSync(
+  path.join(outFnDir, 'package.json'),
+  JSON.stringify({ type: 'commonjs' }, null, 2) + '\n',
+  'utf8'
 );
 
-execFileSync(
-  esbuildBin,
-  [
-    path.join(root, 'netlify/functions/api.ts'),
-    '--bundle',
-    '--platform=node',
-    '--target=node22',
-    '--format=cjs',
-    '--external:node:*',
-    `--outfile=${path.join(outFnDir, 'api.cjs')}`,
-  ],
-  { stdio: 'inherit' }
-);
-
-console.log('[build] Compiled Netlify Serverless Function -> dist/functions/api.cjs');
+console.log('[build] Compiled zero-native Netlify Function -> dist/functions/api.cjs');

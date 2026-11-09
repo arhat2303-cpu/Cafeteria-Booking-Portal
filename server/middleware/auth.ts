@@ -60,13 +60,21 @@ export function createSessionToken(params: {
 }
 
 export function extractTokenFromRequest(req: Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.slice(7).trim();
+    if (bearer) return bearer;
+  }
   const cookieToken = req.cookies?.[SESSION_COOKIE_NAME];
   if (cookieToken && typeof cookieToken === 'string') {
     return cookieToken;
   }
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    return authHeader.slice(7).trim();
+  if (
+    (req.path === '/api/events/stream' || req.path === '/stream') &&
+    typeof req.query?.token === 'string' &&
+    req.query.token.trim()
+  ) {
+    return req.query.token.trim();
   }
   return null;
 }

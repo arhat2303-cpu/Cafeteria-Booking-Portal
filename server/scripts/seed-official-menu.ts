@@ -1,6 +1,7 @@
-import { getDb } from '../db/connection.js';
+import { ensureSqlEngine, getDb } from '../db/connection.js';
 import { seedOfficialBrightRidersMenu } from '../db/official-menu.js';
 
+await ensureSqlEngine();
 const db = getDb();
 const res = seedOfficialBrightRidersMenu(db, true);
 console.log(

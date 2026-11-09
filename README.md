@@ -21,7 +21,7 @@ A complete, production-ready, full-stack cashless school food ordering, digital 
 
 - **Frontend**: React 18, TypeScript, Vite 5, Tailwind CSS (Dark Obsidian Blueprint-Grid design system), Lucide Icons, `qrcode`, `jsqr` (WebRTC camera & canvas QR decoder), custom SVG data visualisations, and real-time Server-Sent Events (`EventSource`) with serverless polling fallback.
 - **Backend**: Node.js 22, Express 4, TypeScript (`tsx`), `bcryptjs` (12-round password hashing), `jsonwebtoken` + `user_sessions` revocation table, `busboy` (multipart upload with binary magic-byte verification), and `stripe` (official Stripe SDK for UAE AED Checkout).
-- **Database**: Persistent relational **SQLite** (`node:sqlite` in WAL mode with `PRAGMA foreign_keys = ON` and `BEGIN IMMEDIATE` ACID transactions) across normalized relational tables (`server/db/schema.sql`), plus automatic **Netlify Blobs** persistence when deployed serverlessly.
+- **Database**: Persistent relational **SQLite** running on the **self-contained `sql.js` WebAssembly engine** (`sql-wasm-inline.js`, SQLite 3 compiled to WASM with the binary embedded in the bundle). It needs **zero native addons and zero experimental Node modules**, so it runs identically on Node 18, 20, 22, AWS Lambda and Netlify Functions. ACID `BEGIN IMMEDIATE` transactions, `foreign_keys = ON`, atomic temp-file-then-rename disk writes locally, and automatic binary snapshot persistence through **Netlify Blobs** when deployed serverlessly.
 
 ### Core Database Tables (`server/db/schema.sql`)
 1. `users` — Shared authentication table restricted to `admin`, `parent`, `student`, and `chef`
@@ -85,7 +85,7 @@ All **28 items** across **4 categories** from the official printed **Bright Ride
 ## 6. Installation, Testing & Local Development
 
 ```bash
-# 1. Install dependencies (Node.js v22.5+ required for built-in node:sqlite)
+# 1. Install dependencies (Node.js 18+ — no native modules, no experimental flags)
 npm install
 
 # 2. Initialize the SQLite database (2 permanent Admins + 28 official SEHHI menu items)
@@ -99,13 +99,37 @@ npm run build
 npm start
 ```
 
+### Verifying the deployed Netlify artifact (recommended before every deployment)
+
+These harnesses load the **exact artifact Netlify deploys** (`dist/functions/api.cjs`) and run it with
+`require('node:sqlite')` deliberately blocked (`ERR_UNKNOWN_BUILTIN_MODULE`) — i.e. the AWS Lambda
+runtime that previously returned `502 Bad Gateway` on sign-in.
+
+```bash
+# Sign-in / menu / routing checks against the serverless bundle over real HTTP
+npm run verify:serverless
+
+# Two genuine cold starts, with the SQLite snapshot round-tripping through a mock Netlify Blobs API
+npm run verify:blobs
+
+# Drives the real React login page (4 role cards → Admin form → submit) against the bundle
+npm run verify:login-ui
+
+# All of the above, after a fresh build
+npm run verify
+```
+
+The live-credential checks read the permanent Admin passwords from the environment
+(`BRS_ADMIN_ONE_PASSWORD` / `BRS_ADMIN_TWO_PASSWORD`) and are skipped when those are unset, so no
+plaintext password is ever stored in this repository.
+
 ---
 
 ## 7. Deploying to Netlify (Zero-Config Ready)
 
 This repository is pre-configured to deploy out-of-the-box on **Netlify** via [`netlify.toml`](./netlify.toml) and [`.nvmrc`](./.nvmrc):
 1. Push this repository to GitHub and import it in **Netlify → Add new site → Import an existing project**.
-2. Netlify automatically detects `Build command: npm run build`, `Publish directory: dist/client`, `Functions directory: dist/functions`, and `Node.js 22`.
+2. Netlify automatically detects `Build command: npm run build`, `Publish directory: dist/client`, `Functions directory: dist/functions`, and `Node.js 22`. The function is bundled as a **self-contained CommonJS file with no `node:*`-experimental or native dependencies**, which is what makes sign-in reliable across every Lambda runtime generation.
 3. Strongly recommended production environment variables in **Netlify → Site configuration → Environment variables**:
    - `JWT_SECRET` — strong random 64-character secret
    - `QR_HMAC_SECRET` — strong random 64-character secret

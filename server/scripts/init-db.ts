@@ -1,6 +1,7 @@
-import { getDb } from '../db/connection.js';
+import { ensureSqlEngine, getDb } from '../db/connection.js';
 import { config } from '../config.js';
 
+await ensureSqlEngine();
 const db = getDb();
 const count = db.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM users');
 console.log(

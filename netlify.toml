@@ -1,6 +1,6 @@
-# Bright Riders School — SmartCanteen Netlify Configuration
-# Deploys the Vite React SPA to Netlify's global CDN and the Express + SQLite API as a
-# self-contained Node 22 Netlify Function backed by strong-consistency Netlify Blobs storage.
+# Bright Riders School — Digital Canteen Netlify Configuration
+# Deploys the Vite React SPA to Netlify's global CDN and the Express + WASM SQLite API
+# as a zero-native-dependency Netlify Function compatible with Node 18, 20, and 22.
 
 [build]
   command = "npm run build"
@@ -9,23 +9,22 @@
 
 [build.environment]
   NODE_VERSION = "22"
-  NODE_OPTIONS = "--no-warnings"
   NPM_FLAGS = "--include=dev"
 
 [functions]
   node_bundler = "esbuild"
 
-# Route API requests to the Express Netlify Function
+# Route API requests (preserving path splat) to the Express Netlify Function
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/api"
+  to = "/.netlify/functions/api/:splat"
   status = 200
   force = true
 
 # Route dynamic uploaded food images to the Express Netlify Function
 [[redirects]]
   from = "/uploads/*"
-  to = "/.netlify/functions/api"
+  to = "/.netlify/functions/api/uploads/:splat"
   status = 200
   force = true
 

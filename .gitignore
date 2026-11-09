@@ -29,3 +29,6 @@ npm-debug.log*
 Unselected files/
 
 
+
+# Temporary UI verification entry (generated)
+.brs-ui-entry-*.tsx
