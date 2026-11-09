@@ -1,107 +1,80 @@
-# Bright Riders School — Digital Canteen Ordering & Payment Solution (`SmartCanteen`)
+# Bright Riders Digital Canteen — School Food Ordering & Payment Portal
 
-A complete, full-stack, role-based cashless canteen ordering, digital AED payment, kitchen preparation, and QR-verified meal collection platform built specifically for **Bright Riders School (Abu Dhabi, UAE)**.
+A complete, production-ready, full-stack cashless school food ordering, digital AED payment, kitchen preparation, and single-use QR meal collection portal built for **Bright Riders School (Abu Dhabi, UAE)**.
 
 ---
 
 ## 1. Platform Overview
 
-**Bright Riders SmartCanteen** replaces physical cash handling and fragmented paper menus with one secure, real-time school dining ecosystem across **five distinct user roles**:
+**Bright Riders Digital Canteen** (`SCHOOL FOOD ORDERING & PAYMENT PORTAL`) features a dark obsidian technical-grid interface with the official Bright Riders School crest and connects **four dedicated school roles** around one real-time relational database:
 
 | Role | Portal Capabilities |
 | :--- | :--- |
-| **Administrator** | Executive KPI & 14-day revenue analytics, complete User Management across all 5 roles, Parent-Student account linking, Menu & Category CRUD with food image uploads & date/weekday scheduling, Order & Payment Management, Refunds, CSV report exports, and Security Activity Logs. |
-| **Parent** | Self-registration & secure login, linked child selector, live canteen menu browsing with date-aware availability, persistent shopping cart, collection break-slot scheduling, special kitchen notes, itemized AED digital checkout, live order progress tracking, payment receipts, order cancellation, and child QR Pass access. |
-| **Student** | Dedicated cashless campus dining pass showing student profile, upcoming pre-paid meals, food quantities, break collection times, live preparation status, and single-use scannable Order QR Codes — zero cash required. |
-| **Teacher** | Faculty dining portal with staff profile, canteen menu browsing, personal meal ordering & digital checkout (configurable by Administrator), live order tracking, and personal QR Meal Collection Pass. |
-| **Chef** | Mobile- and tablet-optimized Kitchen Display System (KDS) grouped by collection break slot, allergy & special-instruction alerts, one-tap *Preparing* / *Ready for Collection* status updates, live WebRTC **Camera QR Scanner**, QR PNG image scanner, Manual Order ID lookup, and atomic single-use **Confirm Collection** verification. |
+| **Student** | Dedicated cashless campus dining pass displaying student profile, upcoming pre-ordered meals, item quantities, collection break slots, live kitchen preparation status, and single-use optical QR meal passes — zero physical cash required. |
+| **Parent** | Self-registration & role-scoped sign-in, linked child selector, official 28-item Bright Riders SEHHI menu browser with photos/search/filters & date-aware availability, persistent shopping cart, break-slot scheduling, special kitchen notes, itemised AED checkout, receipts, eligible pre-prep cancellations, and child QR Pass access. |
+| **Chef** | Separate tablet- and mobile-ready Kitchen Display System (KDS) grouped by collection break slot, allergy & special-instruction callouts, one-tap *Preparing* / *Ready for Collection* status updates, live WebRTC **Camera QR Scanner**, QR PNG image scanner, Manual Order ID verification, and atomic single-use **Confirm Collection**. |
+| **Admin** | Executive KPI & 14-day AED revenue analytics, full User Management across all 4 roles (`Student`, `Parent`, `Chef`, `Admin`), Parent-Student account linking, Menu & Category CRUD with food image uploads & date/weekday scheduling, Order & Payment Management, Refunds, CSV report exports, and Security Audit Logs. |
 
 ---
 
 ## 2. Technology Stack & Architecture
 
-- **Frontend**: React 18, TypeScript, Vite 5, Tailwind CSS, Lucide Icons, `qrcode`, `jsqr` (WebRTC camera & canvas QR decoder), custom interactive SVG data visualizations, and real-time Server-Sent Events (`EventSource`).
+- **Frontend**: React 18, TypeScript, Vite 5, Tailwind CSS (Dark Obsidian Blueprint-Grid design system), Lucide Icons, `qrcode`, `jsqr` (WebRTC camera & canvas QR decoder), custom SVG data visualisations, and real-time Server-Sent Events (`EventSource`) with serverless polling fallback.
 - **Backend**: Node.js 22, Express 4, TypeScript (`tsx`), `bcryptjs` (12-round password hashing), `jsonwebtoken` + `user_sessions` revocation table, `busboy` (multipart upload with binary magic-byte verification), and `stripe` (official Stripe SDK for UAE AED Checkout).
-- **Database**: Persistent relational **SQLite** (`node:sqlite` in WAL mode with `PRAGMA foreign_keys = ON` and `BEGIN IMMEDIATE` ACID transactions) across **20 normalized tables** (`server/db/schema.sql`).
+- **Database**: Persistent relational **SQLite** (`node:sqlite` in WAL mode with `PRAGMA foreign_keys = ON` and `BEGIN IMMEDIATE` ACID transactions) across normalized relational tables (`server/db/schema.sql`), plus automatic **Netlify Blobs** persistence when deployed serverlessly.
 
-### Database Entities (`server/db/schema.sql`)
-1. `users` — Shared authentication table for `admin`, `parent`, `student`, `teacher`, and `chef`
+### Core Database Tables (`server/db/schema.sql`)
+1. `users` — Shared authentication table restricted to `admin`, `parent`, `student`, and `chef`
 2. `role_permissions` — Role-level permission matrix
 3. `user_sessions` — Active JWT sessions (`token_jti`) enabling instant revocation on password reset or deactivation
-4. `parent_profiles` — Parent contact & residential details
+4. `parent_profiles` — Parent contact & Abu Dhabi residential details
 5. `student_profiles` — Student ID (`BRS-STU-...`), Class, Section, House, and Allergy/Dietary alerts
 6. `parent_student_links` — Verified many-to-many Parent-Child relationships
-7. `teacher_profiles` — Staff ID (`BRS-TCH-...`), Department, Homeroom, ordering override
-8. `chef_profiles` — Kitchen Staff ID (`BRS-CHF-...`), Station, Shift
-9. `platform_settings` — School configuration, collection break slots, cancellation cutoff, and `teacher_ordering_enabled`
-10. `food_categories` — Menu categories & display order
-11. `menu_items` — Exact menu items stored in integer **fils** (`1 AED = 100 fils`) for exact financial precision
-12. `menu_availability_schedules` — Day-of-week schedules and specific-date menu overrides
-13. `shopping_carts` & 14. `shopping_cart_items` — Persistent server-side shopping carts
-15. `orders` — Order records (`BRS-YYYYMMDD-XXXXX`) with idempotency protection
-16. `order_items` — Historical item name and unit price snapshots
-17. `payment_transactions` — Digital payment ledger (`TXN-BRS-...`) supporting `succeeded`, `failed`, `pending`, and `refunded` states (never stores card numbers or CVVs)
-18. `qr_verification_tokens` — Cryptographic HMAC-SHA256 signed tokens (`BRSQR.v1.<uid>.<hmac>`) containing zero student PII
-19. `collection_records` — Single-use meal collection audit records (`UNIQUE(order_id)` prevents double collection)
-20. `order_status_history` & `admin_activity_logs` — Complete operational and administrative audit trails
+7. `chef_profiles` — Kitchen Staff ID (`BRS-CHF-...`), Station, Shift
+8. `platform_settings` — School configuration, collection break slots, and cancellation cutoff window
+9. `food_categories` & `menu_items` — Menu categories and items stored in integer **fils** (`1 AED = 100 fils`)
+10. `menu_availability_schedules` — Day-of-week schedules and specific-date menu overrides
+11. `shopping_carts` & `shopping_cart_items` — Persistent server-side parent shopping carts
+12. `orders` & `order_items` — Order records (`BRS-YYYYMMDD-XXXXX`) with historical price snapshots and idempotency keys
+13. `payment_transactions` — Digital payment ledger (`TXN-BRS-...`) supporting `succeeded`, `failed`, `pending`, and `refunded` states (zero card numbers or CVVs stored)
+14. `qr_verification_tokens` — Cryptographic HMAC-SHA256 signed tokens (`BRSQR.v1.<uid>.<hmac>`) containing zero student PII
+15. `collection_records` — Single-use meal collection audit records (`UNIQUE(order_id)` prevents double collection)
+16. `uploaded_files` — Persistent binary food photo storage for serverless & local environments
+17. `order_status_history` & `admin_activity_logs` — Complete operational and administrative audit trails
 
 ---
 
-## 3. Security & QR Verification Design
+## 3. Security, Permanent Admin Bootstrap & Zero Demo Content
 
-- **Zero Hardcoded Secrets**: No passwords, API keys, or secrets exist in frontend source code or committed repository files. On first local run, `server/config.ts` generates strong 256-bit cryptographic secrets into a gitignored `.env` file.
-- **Session Revocation**: Authentication uses `HttpOnly`, `SameSite=Lax` cookies backed by `user_sessions`. Resetting a user's password or deactivating an account immediately revokes active sessions on the backend.
-- **Strict Ownership & RBAC**: Every sensitive endpoint enforces role and ownership checks on the backend (Parents can only view/order for linked children; Students only see their own paid orders; Chefs cannot modify users, prices, or payment settings).
-- **Cryptographic Zero-PII QR Codes**: Every paid order receives a unique `BRSQR.v1.<128-bit-uid>.<hmac-sha256>` token verified with `crypto.timingSafeEqual` and locked inside an atomic SQLite `BEGIN IMMEDIATE` transaction upon collection so no QR code can ever be forged, guessed, or collected twice.
-- **Binary Image Upload Validation**: Uploaded food photos are validated against both MIME whitelists and raw magic-byte file headers (`JPEG`, `PNG`, `WEBP`, max 5 MB).
+- **Zero Demo Accounts or Fake Data**: Fresh initialization creates **zero** demo profiles, fake orders, or fake payment transactions. Only the two authorised permanent Bright Riders Administrator accounts (verified strictly via 12-round `bcrypt` hashes) and the official 28-item Bright Riders SEHHI menu are initialized idempotently.
+- **Zero Plaintext Secrets**: No passwords, API keys, or secrets exist in frontend code or committed repository files, and no administrator credentials are ever displayed on the website.
+- **Role-Portal Sign-In Validation & Session Revocation**: `POST /api/auth/login` validates both credentials and the selected role portal (`expectedRole`). Sessions use `HttpOnly`, `SameSite=Lax` cookies backed by `user_sessions`, revoking active sessions immediately upon password reset or account deactivation.
+- **Cryptographic Zero-PII QR Codes**: Every paid order receives a unique `BRSQR.v1.<128-bit-uid>.<hmac-sha256>` token verified with `crypto.timingSafeEqual` and locked inside an atomic SQLite `BEGIN IMMEDIATE` transaction upon collection.
 
 ---
 
 ## 4. Digital Payment Configuration (Stripe UAE AED + Sandbox Mode)
 
-### Option A: Sandbox / Test Mode (Default when `STRIPE_SECRET_KEY` is blank)
-When no live Stripe credentials are provided, the checkout interface operates as a **clearly labelled UAE AED Sandbox Payment Environment**:
-- Supports testing **Authorized Payment (Success)**, **Declined Authorization (Failed)**, and **Pending Bank Authorization (Pending)**.
+### Option A: UAE AED Sandbox Mode (Default when `STRIPE_SECRET_KEY` is blank)
+When no live Stripe credentials are configured, checkout operates as a **clearly labelled UAE AED Sandbox Payment Environment**:
+- Supports testing **Authorized Payment (`succeeded`)**, **Declined Authorization (`failed`)**, and **Pending Bank Authorization (`pending`)**.
 - Enforces idempotency and duplicate-payment prevention (`409 Conflict`).
 - Supports Parent pre-preparation cancellations with automatic refund status updates, as well as Administrator refunds.
 
 ### Option B: Live / Test Stripe UAE AED Gateway
-To connect real Stripe Checkout in **UAE Dirhams (`AED`)**, add the following keys to `.env`:
+To connect real Stripe Checkout in **UAE Dirhams (`AED`)**, add the following keys to `.env` (or Netlify Environment Variables):
 ```env
 STRIPE_SECRET_KEY=sk_live_or_test_...
 STRIPE_PUBLISHABLE_KEY=pk_live_or_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 PUBLIC_APP_URL=https://your-school-domain.ae
 ```
-Once `STRIPE_SECRET_KEY` is set, `/api/payments/checkout` automatically creates PCI-compliant Stripe Checkout Sessions in `AED` and verifies payment completion before issuing order QR codes.
 
 ---
 
-## 5. Installation & Local Development
+## 5. Official Bright Riders School SEHHI Canteen Menu (`server/db/official-menu.ts`)
 
-### Prerequisites
-- **Node.js v22.5+** (uses Node's built-in native SQLite engine `node:sqlite`)
-- **npm v10+**
-
-### Setup
-```bash
-# 1. Install dependencies
-npm install
-
-# 2. (Optional) Copy .env.example to .env and customize secrets / Stripe keys
-# If omitted, strong local secrets are generated automatically into .env on first start
-cp .env.example .env
-
-# 3. Initialize the SQLite database schema, bootstrap accounts & official 28-item Bright Riders SEHHI menu
-npm run db:init
-npm run db:seed-menu
-
-# 4. Start the unified full-stack development server on http://0.0.0.0:3000
-npm run dev
-```
-
-### Official Bright Riders School SEHHI Canteen Menu (`server/db/official-menu.ts`)
-All **28 items** and **4 categories** from the official printed **Bright Riders School ADFSA & ADEK SEHHI (Al Thabiah)** canteen sheet are stored dynamically in SQLite (never hardcoded in frontend components) and remain 100% editable by Administrators in **Menu Management**:
+All **28 items** across **4 categories** from the official printed **Bright Riders School ADFSA & ADEK SEHHI (Al Thabiah)** canteen menu are stored dynamically in SQLite and remain 100% editable by Administrators in **Menu Management**:
 - **BREAKFAST (14 items)**: *Mini Veg pizza* (`3 AED`), *Baked Samosa (Veg / Chicken)* (`3 AED`), *Mini sandwich (Labneh Cucumber, Chicken tikka, Paneer Tikka, Sweet Corn)* (`3 AED`), *Fresh Fruit Cup* (`6 AED`), *Plain Croissant* (`5 AED`), *Chicken Club Sandwich* (`5 AED/pc`), *Fatayer (Cheese / Zaatar)* (`5 AED`), *Fatayer (Chicken Cheese / Labneh Zaatar, Zaatar Cheese)* (`6 AED`), *Pizza Fatayer* (`7 AED`), *Tacos (Veg / Non Veg)* (`7 AED`), *Veg club Toast* (`7 AED/pc`), *Labneh Falafel wraps* (`9 AED`), *Paneer Tikka Wrap* (`9 AED`), *Chicken Tikka (Sandwich / Wrap)* (`9 AED`).
 - **HOT MEALS (7 items)**: *Veg Burger (Baked)* (`10 AED`), *Grilled Chicken Burger* (`10 AED`), *Nuggets Baked (4 PCS)* (`8 AED`), *Veg Fried Rice* (`12 AED`), *Plain Pasta (white / mix sauce)* (`12 AED`), *Chicken /Paneer Curry and Steam Rice* *(price obscured by camera flash glare on source scan — stored unguessed at `0 AED` and marked inactive until set by Admin)*, *Chicken biriyani (less oil)* (`13 AED`).
 - **SNACKS & DESSERT (4 items)**: *Plain Air-Popped Popcorn* (`3 AED`), *Fruit Dessert (Low Fat)* (`9 AED`), *English cake Slice (Saffron / Vanilla)* (`2 AED`), *Low Fat Milk cake (Sugar less)* (`9 AED`).
@@ -109,65 +82,32 @@ All **28 items** and **4 categories** from the official printed **Bright Riders 
 
 ---
 
-## 6. Running Automated End-to-End Tests
+## 6. Installation, Testing & Local Development
 
-Run the full integration test suite against an isolated SQLite database:
 ```bash
+# 1. Install dependencies (Node.js v22.5+ required for built-in node:sqlite)
+npm install
+
+# 2. Initialize the SQLite database (2 permanent Admins + 28 official SEHHI menu items)
+npm run db:init
+
+# 3. Run the full 12-suite End-to-End Integration Test Suite
 npm test
+
+# 4. Build production client & Netlify Function bundle, or start full-stack server on 0.0.0.0:3000
+npm run build
+npm start
 ```
-`tests/e2e.test.ts` verifies:
-1. Authentication for all 5 roles + invalid credential rejection
-2. Strict backend RBAC & ownership isolation
-3. Admin user creation, parent-student linking, editing, password reset session revocation, activation/deactivation, and deletion
-4. Food image magic-byte validation, menu CRUD, AED price editing, and date-specific availability scheduling
-5. Failed, Pending, and Succeeded digital payments + duplicate payment prevention (`409`)
-6. Student QR pass generation (zero PII) & Chef preparation workflow (`confirmed → preparing → ready_for_collection → collected`)
-7. Forged QR rejection, unpaid order rejection, valid QR verification, and atomic double-collection prevention (`409`)
-8. Teacher ordering administrative toggle, CSV report exports, and SQLite disk persistence across restarts
 
 ---
 
 ## 7. Deploying to Netlify (Zero-Config Ready)
 
 This repository is pre-configured to deploy out-of-the-box on **Netlify** via [`netlify.toml`](./netlify.toml) and [`.nvmrc`](./.nvmrc):
-
-### How It Works on Netlify
-- **Frontend SPA (`dist/client`)**: Served globally from Netlify's CDN with automatic SPA routing (`/* -> /index.html`).
-- **Backend API (`dist/functions/api.cjs`)**: Compiled during `npm run build` into a self-contained **Node 22 Netlify Function** running Express + built-in `node:sqlite`, routed via `/api/*` and `/uploads/*`.
-- **Automatic Persistent Storage (`@netlify/blobs`)**: On Netlify, the SQLite database (including all 28 official Bright Riders SEHHI menu items, users, orders, payments, QR tokens, and binary food photo uploads) is automatically hydrated from and persisted back to **Netlify Blobs (`consistency: 'strong'`)** — **no external database setup is required**.
-- **Serverless Real-Time Sync**: `/api/events/stream` automatically detects serverless execution and switches dashboards cleanly to lightweight visibility-aware polling so functions never hit gateway timeouts.
-
-### Steps to Deploy on Netlify
-1. Log in to [Netlify](https://app.netlify.com) and click **Add new site → Import an existing project → GitHub**.
-2. Select `arhat2303-cpu/Cafeteria-Booking-Portal` (Netlify automatically reads `netlify.toml`: Build command `npm run build`, Publish directory `dist/client`, Functions directory `dist/functions`, `NODE_VERSION = 22`).
-3. *(Optional)* Under **Site configuration → Environment variables**, you may set:
-   - `BOOTSTRAP_ADMIN_PASSWORD` — Initial password for `admin`
-   - `BOOTSTRAP_DEMO_PASSWORD` — Initial password for showcase accounts (`parent.fatima`, `student.zayed`, `student.mariam`, `teacher.anita`, `chef.rashid`)
-   - `JWT_SECRET` & `QR_HMAC_SECRET` — Custom 64-character random hex signing keys (if omitted, strong keys are generated once and persisted inside the database automatically)
-   - `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` — Optional live/test UAE AED Stripe credentials
-4. Click **Deploy site**.
-   - If you deployed **without** setting `BOOTSTRAP_ADMIN_PASSWORD`, simply open your live `https://<your-site>.netlify.app` URL — a one-time **First-Time Cloud Deployment Setup** card lets you set your Admin & Showcase passwords right in the browser and permanently locks itself once completed!
-
----
-
-## 8. Self-Hosted / VM Production Build & Deployment
-
-```bash
-# Compile TypeScript check & build optimized Vite client + Netlify function bundle
-npx tsc --noEmit
-npm run build
-
-# Run stateful Node.js production server on port 3000
-npm start
-```
-
-For dedicated VM / container deployment at Bright Riders School:
-1. Provision a Linux VM or container running **Node.js 22 LTS** behind HTTPS (`Nginx` / `Caddy` / Cloud Load Balancer) — HTTPS is required by browsers to enable WebRTC camera access (`getUserMedia`) on Chef tablets and phones.
-2. Mount a persistent volume for `server/data/` (SQLite WAL database) and `server/uploads/menu/` (uploaded food images), and schedule daily `sqlite3 .backup` snapshots.
-3. Configure strong `JWT_SECRET`, `QR_HMAC_SECRET`, and live UAE `STRIPE_SECRET_KEY` values in `.env`.
-
----
-
-## 9. Additional Documentation
-- [`docs/API_REFERENCE.md`](./docs/API_REFERENCE.md) — Complete REST & SSE API endpoint reference
-- [`docs/DEMONSTRATION_VIDEO_GUIDE.md`](./docs/DEMONSTRATION_VIDEO_GUIDE.md) — Complete 10-Scene Exhibition Demonstration Video Storyboard, Narration Script & Recording Guide
+1. Push this repository to GitHub and import it in **Netlify → Add new site → Import an existing project**.
+2. Netlify automatically detects `Build command: npm run build`, `Publish directory: dist/client`, `Functions directory: dist/functions`, and `Node.js 22`.
+3. Strongly recommended production environment variables in **Netlify → Site configuration → Environment variables**:
+   - `JWT_SECRET` — strong random 64-character secret
+   - `QR_HMAC_SECRET` — strong random 64-character secret
+   - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
+4. Click **Deploy site** — all 4 role portals, the 2 permanent Administrator accounts, and the 28-item Bright Riders SEHHI menu persist automatically via `@netlify/blobs`.

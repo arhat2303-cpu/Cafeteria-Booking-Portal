@@ -12,17 +12,15 @@ const isServerlessRuntime = Boolean(
 
 const envPath = path.resolve(process.cwd(), '.env');
 
-// Automatically create a local gitignored .env with strong random cryptographic secrets on first local run
+// Automatically create a local gitignored .env with cryptographic signing keys on first local run
 // Never attempt to write .env on read-only serverless filesystems (e.g., Netlify Functions / AWS Lambda)
 if (!isServerlessRuntime && !fs.existsSync(envPath) && process.env.NODE_ENV !== 'test') {
   try {
     const jwtSecret = crypto.randomBytes(32).toString('hex');
     const qrSecret = crypto.randomBytes(32).toString('hex');
-    const initialAdminPw = `BRS-Admin-${crypto.randomBytes(4).toString('hex')}!`;
-    const initialDemoPw = `BRS-Campus-${crypto.randomBytes(4).toString('hex')}!`;
 
     const generatedEnv = [
-      '# Auto-generated local development secrets (gitignored - never committed)',
+      '# Auto-generated local development signing keys (gitignored - never committed)',
       'PORT=3000',
       'HOST=0.0.0.0',
       'DATABASE_PATH=./server/data/canteen.sqlite',
@@ -34,9 +32,6 @@ if (!isServerlessRuntime && !fs.existsSync(envPath) && process.env.NODE_ENV !== 
       'STRIPE_SECRET_KEY=',
       'STRIPE_PUBLISHABLE_KEY=',
       'STRIPE_WEBHOOK_SECRET=',
-      `BOOTSTRAP_ADMIN_PASSWORD=${initialAdminPw}`,
-      `BOOTSTRAP_DEMO_PASSWORD=${initialDemoPw}`,
-      'BOOTSTRAP_DEMO_ACCOUNTS=true',
       '',
     ].join('\n');
 
@@ -75,9 +70,6 @@ export const config = {
     process.env.DEPLOY_PRIME_URL ||
     process.env.URL ||
     'http://localhost:3000',
-  bootstrapAdminPassword: process.env.BOOTSTRAP_ADMIN_PASSWORD || '',
-  bootstrapDemoPassword: process.env.BOOTSTRAP_DEMO_PASSWORD || '',
-  bootstrapDemoAccounts: process.env.BOOTSTRAP_DEMO_ACCOUNTS !== 'false',
   get isStripeConfigured(): boolean {
     return this.stripeSecretKey.startsWith('sk_');
   },

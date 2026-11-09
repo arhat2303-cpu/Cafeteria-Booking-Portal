@@ -40,20 +40,20 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           <div
             key={t.id}
             role="status"
-            className={`pointer-events-auto flex items-start gap-3 rounded-xl border p-3.5 shadow-elevated backdrop-blur-md transition-all ${
+            className={`pointer-events-auto flex items-start gap-3 rounded-2xl border p-4 shadow-elevated backdrop-blur-md transition-all ${
               t.variant === 'success'
-                ? 'bg-emerald-950/95 border-emerald-700 text-white'
+                ? 'bg-[#111916]/95 border-emerald-500/40 text-white'
                 : t.variant === 'error'
-                ? 'bg-rose-950/95 border-rose-700 text-white'
-                : 'bg-brs-navy/95 border-slate-700 text-white'
+                ? 'bg-[#1C1215]/95 border-rose-500/40 text-white'
+                : 'bg-[#13161E]/95 border-white/15 text-white'
             }`}
           >
             {t.variant === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              <CheckCircle2 className="w-5 h-5 text-[#CCF32F] shrink-0 mt-0.5" />
             ) : t.variant === 'error' ? (
               <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
             ) : (
-              <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <Info className="w-5 h-5 text-[#5CE1E6] shrink-0 mt-0.5" />
             )}
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold leading-snug">{t.title}</p>

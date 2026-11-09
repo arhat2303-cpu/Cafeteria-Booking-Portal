@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
 import { getDb, getEffectiveJwtSecret } from '../db/connection.js';
 
-export type UserRole = 'admin' | 'parent' | 'student' | 'teacher' | 'chef';
+export type UserRole = 'admin' | 'parent' | 'student' | 'chef';
 
 export interface AuthUser {
   id: number;

@@ -27,8 +27,6 @@ export function formatOrderRecord(orderId: number, viewerRole: string) {
             sp.student_code,
             sp.class_name,
             sp.allergies_notes,
-            tp.staff_code as teacher_staff_code,
-            tp.department as teacher_department,
             cr.collected_at,
             cr.verification_method,
             chef_u.full_name as collected_by_chef_name,
@@ -39,7 +37,6 @@ export function formatOrderRecord(orderId: number, viewerRole: string) {
      JOIN users placer ON placer.id = o.placed_by_user_id
      JOIN users ben ON ben.id = o.beneficiary_user_id
      LEFT JOIN student_profiles sp ON sp.user_id = o.beneficiary_user_id
-     LEFT JOIN teacher_profiles tp ON tp.user_id = o.beneficiary_user_id
      LEFT JOIN collection_records cr ON cr.order_id = o.id
      LEFT JOIN users chef_u ON chef_u.id = cr.verified_by_chef_id
      LEFT JOIN qr_verification_tokens qvt ON qvt.order_id = o.id
@@ -101,7 +98,7 @@ export function formatOrderRecord(orderId: number, viewerRole: string) {
     order.payment_status === 'paid' &&
     order.order_status !== 'cancelled' &&
     !order.qr_revoked_at &&
-    ['parent', 'student', 'teacher', 'admin'].includes(viewerRole);
+    ['parent', 'student', 'admin'].includes(viewerRole);
 
   return {
     id: order.id,
@@ -113,7 +110,7 @@ export function formatOrderRecord(orderId: number, viewerRole: string) {
     beneficiaryName: order.beneficiary_name,
     beneficiaryRole: order.beneficiary_role,
     studentCode: order.student_code || null,
-    className: order.class_name || (order.teacher_department ? `Staff • ${order.teacher_department}` : 'Staff'),
+    className: order.class_name || 'Unassigned Class',
     allergiesNotes: order.allergies_notes || null,
     orderDate: order.order_date,
     collectionSlot: order.collection_slot,
@@ -197,9 +194,6 @@ function userCanAccessOrder(userId: number, role: string, orderId: number): bool
   if (role === 'student') {
     return order.beneficiary_user_id === userId && order.payment_status === 'paid';
   }
-  if (role === 'teacher') {
-    return order.placed_by_user_id === userId || order.beneficiary_user_id === userId;
-  }
   if (role === 'parent') {
     if (order.placed_by_user_id === userId) return true;
     const link = db.get<{ id: number }>(
@@ -212,8 +206,8 @@ function userCanAccessOrder(userId: number, role: string, orderId: number): bool
   return false;
 }
 
-// Create Order (Parent for linked child, or Teacher for self when enabled)
-ordersRouter.post('/', authenticate, requireRole(['parent', 'teacher']), (req, res) => {
+// Create Order (Parent for linked child)
+ordersRouter.post('/', authenticate, requireRole(['parent']), (req, res) => {
   try {
     const db = getDb();
     const userId = req.user!.id;
@@ -242,65 +236,37 @@ ordersRouter.post('/', authenticate, requireRole(['parent', 'teacher']), (req, r
       }
     }
 
-    // Check Teacher Ordering Permission if Teacher
-    let resolvedBeneficiaryId: number;
-    let beneficiaryRole: 'student' | 'teacher';
+    // Parent must specify a linked active student (from body or cart)
+    const cartMeta = db.get<{
+      id: number;
+      beneficiary_user_id: number | null;
+      order_date: string | null;
+      collection_slot: string | null;
+      special_instructions: string | null;
+    }>('SELECT * FROM shopping_carts WHERE user_id = ?', userId);
 
-    if (role === 'teacher') {
-      const setting = db.get<{ value: string }>(
-        `SELECT value FROM platform_settings WHERE key = 'teacher_ordering_enabled'`
-      );
-      const tp = db.get<{ can_place_orders_override: number | null }>(
-        'SELECT can_place_orders_override FROM teacher_profiles WHERE user_id = ?',
-        userId
-      );
-      const globallyEnabled = !setting || setting.value !== 'false';
-      const allowed =
-        tp?.can_place_orders_override !== null && tp?.can_place_orders_override !== undefined
-          ? Boolean(tp.can_place_orders_override)
-          : globallyEnabled;
-
-      if (!allowed) {
-        res.status(403).json({
-          error: 'Teacher canteen ordering is currently disabled by Bright Riders School administration.',
-        });
-        return;
-      }
-      resolvedBeneficiaryId = userId;
-      beneficiaryRole = 'teacher';
-    } else {
-      // Parent must specify a linked active student (from body or cart)
-      const cartMeta = db.get<{
-        id: number;
-        beneficiary_user_id: number | null;
-        order_date: string | null;
-        collection_slot: string | null;
-        special_instructions: string | null;
-      }>('SELECT * FROM shopping_carts WHERE user_id = ?', userId);
-
-      const candidateStudentId = Number(beneficiaryUserId || cartMeta?.beneficiary_user_id || 0);
-      if (!candidateStudentId) {
-        res.status(400).json({ error: 'Please select which linked child this order is for.' });
-        return;
-      }
-
-      const link = db.get<{ id: number }>(
-        `SELECT psl.id
-         FROM parent_student_links psl
-         JOIN users u ON u.id = psl.student_user_id
-         WHERE psl.parent_user_id = ? AND psl.student_user_id = ? AND u.is_active = 1`,
-        userId,
-        candidateStudentId
-      );
-      if (!link) {
-        res.status(403).json({
-          error: 'You can only place canteen orders for children linked to your parent account.',
-        });
-        return;
-      }
-      resolvedBeneficiaryId = candidateStudentId;
-      beneficiaryRole = 'student';
+    const candidateStudentId = Number(beneficiaryUserId || cartMeta?.beneficiary_user_id || 0);
+    if (!candidateStudentId) {
+      res.status(400).json({ error: 'Please select which linked child this order is for.' });
+      return;
     }
+
+    const link = db.get<{ id: number }>(
+      `SELECT psl.id
+       FROM parent_student_links psl
+       JOIN users u ON u.id = psl.student_user_id
+       WHERE psl.parent_user_id = ? AND psl.student_user_id = ? AND u.is_active = 1`,
+      userId,
+      candidateStudentId
+    );
+    if (!link) {
+      res.status(403).json({
+        error: 'You can only place canteen orders for children linked to your parent account.',
+      });
+      return;
+    }
+    const resolvedBeneficiaryId = candidateStudentId;
+    const beneficiaryRole: 'student' = 'student';
 
     const cartRow = db.get<{
       id: number;
@@ -518,9 +484,6 @@ ordersRouter.get('/', authenticate, (req, res) => {
   } else if (user.role === 'student') {
     where.push(`(o.beneficiary_user_id = ? AND o.payment_status = 'paid')`);
     params.push(user.id);
-  } else if (user.role === 'teacher') {
-    where.push(`(o.placed_by_user_id = ? OR o.beneficiary_user_id = ?)`);
-    params.push(user.id, user.id);
   } else if (user.role === 'chef') {
     where.push(`o.payment_status = 'paid'`);
   }
@@ -667,8 +630,8 @@ ordersRouter.get('/:id/qr', authenticate, async (req, res) => {
   }
 });
 
-// Cancel Order (Parent/Teacher before preparation starts, or Admin anytime prior to collection)
-ordersRouter.post('/:id/cancel', authenticate, requireRole(['parent', 'teacher', 'admin']), (req, res) => {
+// Cancel Order (Parent before preparation starts, or Admin anytime prior to collection)
+ordersRouter.post('/:id/cancel', authenticate, requireRole(['parent', 'admin']), (req, res) => {
   try {
     const orderId = Number(req.params.id);
     const user = req.user!;

@@ -3,7 +3,7 @@
 
 PRAGMA foreign_keys = ON;
 
--- 1. Core User Accounts (Shared Authentication System across all 5 Roles)
+-- 1. Core User Accounts (Shared Authentication System across all 4 Roles: Student, Parent, Chef, Admin)
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   full_name TEXT NOT NULL,
   email TEXT,
   phone TEXT,
-  role TEXT NOT NULL CHECK (role IN ('admin', 'parent', 'student', 'teacher', 'chef')),
+  role TEXT NOT NULL CHECK (role IN ('admin', 'parent', 'student', 'chef')),
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   permissions_json TEXT NOT NULL DEFAULT '{}',
   last_login_at TEXT,
@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
 -- 2. Role Permissions Matrix
 CREATE TABLE IF NOT EXISTS role_permissions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  role TEXT NOT NULL CHECK (role IN ('admin', 'parent', 'student', 'teacher', 'chef')),
+  role TEXT NOT NULL CHECK (role IN ('admin', 'parent', 'student', 'chef')),
   permission_key TEXT NOT NULL,
   allowed INTEGER NOT NULL DEFAULT 1 CHECK (allowed IN (0, 1)),
   description TEXT,
@@ -87,18 +87,7 @@ CREATE TABLE IF NOT EXISTS parent_student_links (
 CREATE INDEX IF NOT EXISTS idx_psl_parent ON parent_student_links(parent_user_id);
 CREATE INDEX IF NOT EXISTS idx_psl_student ON parent_student_links(student_user_id);
 
--- 7. Teacher Profiles
-CREATE TABLE IF NOT EXISTS teacher_profiles (
-  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  staff_code TEXT NOT NULL UNIQUE,
-  department TEXT NOT NULL DEFAULT 'General Academics',
-  homeroom_class TEXT,
-  can_place_orders_override INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- 8. Chef Profiles
+-- 7. Chef Profiles
 CREATE TABLE IF NOT EXISTS chef_profiles (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   staff_code TEXT NOT NULL UNIQUE,
@@ -192,7 +181,7 @@ CREATE TABLE IF NOT EXISTS orders (
   order_number TEXT NOT NULL UNIQUE,
   placed_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   beneficiary_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  beneficiary_role TEXT NOT NULL CHECK (beneficiary_role IN ('student', 'teacher')),
+  beneficiary_role TEXT NOT NULL DEFAULT 'student' CHECK (beneficiary_role IN ('student')),
   order_date TEXT NOT NULL,
   collection_slot TEXT NOT NULL,
   subtotal_fils INTEGER NOT NULL CHECK (subtotal_fils >= 0),

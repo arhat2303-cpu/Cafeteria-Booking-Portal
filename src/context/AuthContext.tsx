@@ -1,12 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import type { PlatformSettings, UserAccount } from '@/types';
+import type { PlatformSettings, UserAccount, UserRole } from '@/types';
 
 interface AuthContextValue {
   user: UserAccount | null;
   settings: PlatformSettings | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<UserAccount>;
+  login: (username: string, password: string, expectedRole?: UserRole) => Promise<UserAccount>;
   registerParent: (payload: Record<string, unknown>) => Promise<UserAccount>;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
@@ -18,7 +18,6 @@ const DEFAULT_SETTINGS: PlatformSettings = {
   schoolName: 'Bright Riders School',
   schoolCampus: 'Abu Dhabi Campus, UAE',
   currencyCode: 'AED',
-  teacherOrderingEnabled: true,
   cancellationCutoffMinutes: 60,
   collectionSlots: [
     {
@@ -87,18 +86,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
-  const login = useCallback(async (username: string, password: string) => {
-    const data = await apiFetch<{ user: UserAccount; settings: PlatformSettings }>(
-      '/api/auth/login',
-      {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-      }
-    );
-    setUser(data.user);
-    setSettings(data.settings);
-    return data.user;
-  }, []);
+  const login = useCallback(
+    async (username: string, password: string, expectedRole?: UserRole) => {
+      const data = await apiFetch<{ user: UserAccount; settings: PlatformSettings }>(
+        '/api/auth/login',
+        {
+          method: 'POST',
+          body: JSON.stringify({ username, password, expectedRole }),
+        }
+      );
+      setUser(data.user);
+      setSettings(data.settings);
+      return data.user;
+    },
+    []
+  );
 
   const registerParent = useCallback(async (payload: Record<string, unknown>) => {
     const data = await apiFetch<{ user: UserAccount; settings: PlatformSettings }>(

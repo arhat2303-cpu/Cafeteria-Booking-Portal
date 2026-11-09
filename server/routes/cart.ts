@@ -12,16 +12,11 @@ function ensureUserCart(userId: number, role: string): number {
     userId
   );
   if (existing) {
-    if (role === 'teacher' && existing.beneficiary_user_id !== userId) {
-      db.run('UPDATE shopping_carts SET beneficiary_user_id = ? WHERE id = ?', userId, existing.id);
-    }
     return existing.id;
   }
 
   let defaultBeneficiary: number | null = null;
-  if (role === 'teacher') {
-    defaultBeneficiary = userId;
-  } else if (role === 'parent') {
+  if (role === 'parent') {
     const firstChild = db.get<{ student_user_id: number }>(
       `SELECT psl.student_user_id
        FROM parent_student_links psl
@@ -118,7 +113,7 @@ export function buildCartPayload(userId: number, role: string) {
   };
 }
 
-cartRouter.use(authenticate, requireRole(['parent', 'teacher']));
+cartRouter.use(authenticate, requireRole(['parent']));
 
 cartRouter.get('/', (req, res) => {
   res.json({ cart: buildCartPayload(req.user!.id, req.user!.role) });
@@ -134,9 +129,7 @@ cartRouter.put('/meta', (req, res) => {
     const { beneficiaryUserId, orderDate, collectionSlot, specialInstructions } = req.body || {};
 
     let targetBeneficiary: number | null | undefined = undefined;
-    if (role === 'teacher') {
-      targetBeneficiary = userId;
-    } else if (beneficiaryUserId !== undefined && beneficiaryUserId !== null) {
+    if (beneficiaryUserId !== undefined && beneficiaryUserId !== null) {
       const link = db.get<{ id: number }>(
         `SELECT psl.id
          FROM parent_student_links psl

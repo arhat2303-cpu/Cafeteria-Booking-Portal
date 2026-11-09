@@ -29,7 +29,7 @@ const SANDBOX_METHOD_LABELS: Record<string, string> = {
   apple_pay_sandbox: 'Digital Wallet Sandbox (Test Environment)',
 };
 
-paymentsRouter.post('/checkout', authenticate, requireRole(['parent', 'teacher']), async (req, res) => {
+paymentsRouter.post('/checkout', authenticate, requireRole(['parent']), async (req, res) => {
   try {
     const db = getDb();
     const user = req.user!;
@@ -353,7 +353,7 @@ paymentsRouter.get('/stripe/verify-session', authenticate, async (req, res) => {
 paymentsRouter.post(
   '/:transactionId/resolve-pending',
   authenticate,
-  requireRole(['parent', 'teacher', 'admin']),
+  requireRole(['parent', 'admin']),
   (req, res) => {
     try {
       const txnId = Number(req.params.transactionId);
@@ -449,8 +449,8 @@ paymentsRouter.post(
   }
 );
 
-// List Payment Transactions (Parent/Teacher own history, Admin full payment management)
-paymentsRouter.get('/', authenticate, requireRole(['parent', 'teacher', 'admin']), (req, res) => {
+// List Payment Transactions (Parent own history, Admin full payment management)
+paymentsRouter.get('/', authenticate, requireRole(['parent', 'admin']), (req, res) => {
   const db = getDb();
   const user = req.user!;
   const { status, search } = req.query;

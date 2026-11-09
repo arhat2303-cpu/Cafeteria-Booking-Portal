@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'parent' | 'student' | 'teacher' | 'chef';
+export type UserRole = 'admin' | 'parent' | 'student' | 'chef';
 
 export interface LinkedChild {
   linkId: number;
@@ -39,12 +39,6 @@ export interface UserAccount {
     allergiesNotes: string | null;
     parents: Array<{ fullName: string; phone: string | null; relationship: string }>;
   } | null;
-  teacherProfile?: {
-    staffCode: string;
-    department: string;
-    homeroomClass: string | null;
-    canPlaceOrdersOverride: boolean | null;
-  } | null;
   chefProfile?: {
     staffCode: string;
     station: string;
@@ -62,12 +56,10 @@ export interface PlatformSettings {
   schoolName: string;
   schoolCampus: string;
   currencyCode: string;
-  teacherOrderingEnabled: boolean;
   cancellationCutoffMinutes: number;
   collectionSlots: CollectionSlotOption[];
   paymentMode: 'stripe' | 'brs_sandbox_aed';
   stripePublishableKey?: string | null;
-  initialSetupPending?: boolean;
 }
 
 export interface FoodCategory {
@@ -161,7 +153,7 @@ export interface OrderRecord {
   placedByRole: string;
   beneficiaryUserId: number;
   beneficiaryName: string;
-  beneficiaryRole: 'student' | 'teacher';
+  beneficiaryRole: 'student';
   studentCode: string | null;
   className: string;
   allergiesNotes: string | null;

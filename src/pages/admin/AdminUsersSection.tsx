@@ -235,7 +235,7 @@ export const AdminUsersSection: React.FC = () => {
       {/* Top Toolbar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white rounded-3xl border border-slate-200 p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          {(['all', 'student', 'parent', 'teacher', 'chef', 'admin'] as const).map((r) => (
+          {(['all', 'student', 'parent', 'chef', 'admin'] as const).map((r) => (
             <button
               key={r}
               onClick={() => setRoleFilter(r)}
@@ -379,12 +379,6 @@ export const AdminUsersSection: React.FC = () => {
                           <div className="font-mono text-slate-500">{u.studentCode}</div>
                         </>
                       )}
-                      {u.role === 'teacher' && (
-                        <>
-                          <div className="font-semibold">{u.department}</div>
-                          <div className="font-mono text-slate-500">{u.staffCode}</div>
-                        </>
-                      )}
                       {u.role === 'chef' && (
                         <>
                           <div className="font-semibold">{u.station}</div>
@@ -499,7 +493,6 @@ export const AdminUsersSection: React.FC = () => {
                   >
                     <option value="student">Student</option>
                     <option value="parent">Parent</option>
-                    <option value="teacher">Teacher</option>
                     <option value="chef">Chef / Kitchen Staff</option>
                     <option value="admin">Administrator</option>
                   </select>
@@ -645,34 +638,6 @@ export const AdminUsersSection: React.FC = () => {
                       </select>
                     </div>
                   )}
-                </div>
-              )}
-
-              {formRole === 'teacher' && (
-                <div className="grid grid-cols-2 gap-3 bg-slate-50 rounded-2xl p-3.5 border border-slate-200">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Staff ID
-                    </label>
-                    <input
-                      type="text"
-                      value={staffCode}
-                      onChange={(e) => setStaffCode(e.target.value)}
-                      placeholder="BRS-TCH-..."
-                      className="w-full rounded-xl border border-slate-300 px-3 py-1.5 bg-white font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Department
-                    </label>
-                    <input
-                      type="text"
-                      value={department}
-                      onChange={(e) => setDepartment(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-3 py-1.5 bg-white"
-                    />
-                  </div>
                 </div>
               )}
 

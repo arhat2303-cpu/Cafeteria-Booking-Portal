@@ -6,11 +6,192 @@
   html {
     scroll-behavior: smooth;
     -webkit-tap-highlight-color: transparent;
+    color-scheme: dark;
   }
 
   body {
+    background-color: #0b0d11;
+    color: #f4f4f5;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
+}
+
+/* Signature Obsidian Blueprint Grid Canvas (adapted from reference architecture) */
+.portal-grid-bg {
+  background-color: #0b0d11;
+  background-image:
+    radial-gradient(circle at 50% 34%, rgba(204, 243, 47, 0.055) 0%, transparent 48%),
+    radial-gradient(circle at 20% 70%, rgba(92, 225, 230, 0.04) 0%, transparent 42%),
+    radial-gradient(circle at 80% 70%, rgba(167, 139, 250, 0.045) 0%, transparent 42%),
+    linear-gradient(to right, rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 48px 48px, 48px 48px;
+}
+
+/* Cohesive Dark Obsidian Surface Harmonization Across All Dashboards & Modals */
+.dark-portal-theme {
+  min-height: 100vh;
+  background-color: #0b0d11;
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(204, 243, 47, 0.045) 0%, transparent 45%),
+    linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 100% 100%, 48px 48px, 48px 48px;
+  color: #f4f4f5;
+}
+
+.dark-portal-theme header {
+  background-color: rgba(11, 13, 17, 0.88) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark-portal-theme .bg-slate-50,
+.dark-portal-theme .bg-slate-50\/70,
+.dark-portal-theme .bg-slate-50\/80 {
+  background-color: #0e1117 !important;
+}
+
+.dark-portal-theme .bg-white:not(.qr-white-surface),
+.dark-portal-theme .bg-white\/95:not(.qr-white-surface) {
+  background-color: #13161e !important;
+  color: #f4f4f5;
+}
+
+.dark-portal-theme .bg-slate-100,
+.dark-portal-theme .bg-slate-100\/90,
+.dark-portal-theme .bg-slate-200\/70 {
+  background-color: #191d27 !important;
+}
+
+.dark-portal-theme .border-slate-100,
+.dark-portal-theme .border-slate-200,
+.dark-portal-theme .border-slate-200\/80,
+.dark-portal-theme .border-slate-200\/90,
+.dark-portal-theme .border-slate-300 {
+  border-color: rgba(255, 255, 255, 0.09) !important;
+}
+
+.dark-portal-theme .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark-portal-theme .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(255, 255, 255, 0.07) !important;
+}
+
+.dark-portal-theme .text-slate-900,
+.dark-portal-theme .text-slate-800 {
+  color: #f8fafc !important;
+}
+
+.dark-portal-theme .text-slate-700,
+.dark-portal-theme .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
+.dark-portal-theme .text-slate-500,
+.dark-portal-theme .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+/* Primary action buttons inside dark-portal-theme */
+.dark-portal-theme button.bg-brs-navy,
+.dark-portal-theme a.bg-brs-navy {
+  background-color: #ccf32f !important;
+  color: #090b0e !important;
+}
+
+.dark-portal-theme button.hover\:bg-brs-royal:hover,
+.dark-portal-theme a.hover\:bg-brs-royal:hover {
+  background-color: #dcf958 !important;
+  color: #090b0e !important;
+}
+
+.dark-portal-theme aside.bg-brs-navy,
+.dark-portal-theme header.bg-brs-navy,
+.dark-portal-theme div.bg-brs-navy {
+  background-color: #11141c !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark-portal-theme .text-brs-navy,
+.dark-portal-theme .text-brs-royal {
+  color: #ccf32f !important;
+}
+
+/* Form inputs, selects, and textareas inside dark-portal-theme */
+.dark-portal-theme input:not([type='checkbox']):not([type='radio']):not([type='file']),
+.dark-portal-theme select,
+.dark-portal-theme textarea {
+  background-color: #0d1016 !important;
+  color: #f8fafc !important;
+  border-color: rgba(255, 255, 255, 0.13) !important;
+}
+
+.dark-portal-theme input::placeholder,
+.dark-portal-theme textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Subtle dark-tinted semantic callouts inside dashboards */
+.dark-portal-theme .bg-emerald-50,
+.dark-portal-theme .bg-emerald-50\/60,
+.dark-portal-theme .bg-emerald-100 {
+  background-color: rgba(16, 185, 129, 0.13) !important;
+  border-color: rgba(52, 211, 153, 0.28) !important;
+}
+.dark-portal-theme .text-emerald-950,
+.dark-portal-theme .text-emerald-900,
+.dark-portal-theme .text-emerald-800,
+.dark-portal-theme .text-emerald-700 {
+  color: #6ee7b7 !important;
+}
+
+.dark-portal-theme .bg-amber-50,
+.dark-portal-theme .bg-amber-50\/70,
+.dark-portal-theme .bg-amber-100 {
+  background-color: rgba(245, 158, 11, 0.13) !important;
+  border-color: rgba(251, 191, 36, 0.28) !important;
+}
+.dark-portal-theme .text-amber-950,
+.dark-portal-theme .text-amber-900,
+.dark-portal-theme .text-amber-800 {
+  color: #fcd34d !important;
+}
+
+.dark-portal-theme .bg-rose-50,
+.dark-portal-theme .bg-rose-100 {
+  background-color: rgba(244, 63, 94, 0.13) !important;
+  border-color: rgba(251, 113, 133, 0.28) !important;
+}
+.dark-portal-theme .text-rose-900,
+.dark-portal-theme .text-rose-800,
+.dark-portal-theme .text-rose-700 {
+  color: #fda4af !important;
+}
+
+.dark-portal-theme .bg-sky-50,
+.dark-portal-theme .bg-sky-100 {
+  background-color: rgba(14, 165, 233, 0.13) !important;
+  border-color: rgba(56, 189, 248, 0.28) !important;
+}
+.dark-portal-theme .text-sky-900,
+.dark-portal-theme .text-sky-800,
+.dark-portal-theme .text-sky-700 {
+  color: #7dd3fc !important;
+}
+
+.dark-portal-theme .bg-indigo-50,
+.dark-portal-theme .bg-purple-50 {
+  background-color: rgba(167, 139, 250, 0.14) !important;
+  border-color: rgba(167, 139, 250, 0.28) !important;
+}
+.dark-portal-theme .text-indigo-800,
+.dark-portal-theme .text-purple-800 {
+  color: #c4b5fd !important;
+}
+
+/* Preserve pure white background strictly on optical QR code cards */
+.qr-white-surface {
+  background-color: #ffffff !important;
+  color: #0b0d11 !important;
 }
 
 @keyframes scanline {
@@ -32,18 +213,18 @@
   animation: scanline 2.4s ease-in-out infinite;
 }
 
-/* Subtle custom scrollbar */
+/* Custom sleek dark scrollbar */
 ::-webkit-scrollbar {
   width: 7px;
   height: 7px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: #0b0d11;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #272b36;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #3f4556;
 }

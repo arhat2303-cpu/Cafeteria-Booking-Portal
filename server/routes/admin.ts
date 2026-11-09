@@ -21,7 +21,6 @@ adminRouter.get('/overview', (_req, res) => {
     admin: 0,
     parent: 0,
     student: 0,
-    teacher: 0,
     chef: 0,
   };
   let totalUsers = 0;
@@ -124,7 +123,7 @@ adminRouter.get('/overview', (_req, res) => {
             COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_fils ELSE 0 END), 0) as revenue_fils
      FROM orders o
      LEFT JOIN student_profiles sp ON sp.user_id = o.beneficiary_user_id
-     GROUP BY COALESCE(sp.class_name, 'Staff / Faculty')
+     GROUP BY COALESCE(sp.class_name, 'Unassigned Class')
      ORDER BY orders_count DESC
      LIMIT 10`
   );
@@ -134,7 +133,6 @@ adminRouter.get('/overview', (_req, res) => {
       total: totalUsers,
       students: roleMap.student,
       parents: roleMap.parent,
-      teachers: roleMap.teacher,
       chefs: roleMap.chef,
       admins: roleMap.admin,
     },
@@ -185,12 +183,10 @@ function buildAdminUserRecord(userId: number) {
             u.permissions_json, u.last_login_at, u.created_at,
             sp.student_code, sp.class_name, sp.section, sp.house, sp.allergies_notes, sp.daily_spend_limit_fils,
             pp.address, pp.emergency_contact,
-            tp.staff_code as teacher_staff_code, tp.department, tp.homeroom_class, tp.can_place_orders_override,
             cp.staff_code as chef_staff_code, cp.station, cp.shift
      FROM users u
      LEFT JOIN student_profiles sp ON sp.user_id = u.id
      LEFT JOIN parent_profiles pp ON pp.user_id = u.id
-     LEFT JOIN teacher_profiles tp ON tp.user_id = u.id
      LEFT JOIN chef_profiles cp ON cp.user_id = u.id
      WHERE u.id = ?`,
     userId
@@ -260,13 +256,7 @@ function buildAdminUserRecord(userId: number) {
     dailySpendLimitAed: u.daily_spend_limit_fils ? filsToAed(u.daily_spend_limit_fils) : 0,
     address: u.address || null,
     emergencyContact: u.emergency_contact || null,
-    staffCode: u.teacher_staff_code || u.chef_staff_code || null,
-    department: u.department || null,
-    homeroomClass: u.homeroom_class || null,
-    canPlaceOrdersOverride:
-      u.can_place_orders_override === null || u.can_place_orders_override === undefined
-        ? null
-        : Boolean(u.can_place_orders_override),
+    staffCode: u.chef_staff_code || null,
     station: u.station || null,
     shift: u.shift || null,
     linkedChildren: linkedChildren.map((lc) => ({
@@ -306,9 +296,9 @@ adminRouter.get('/users', (req, res) => {
   if (search && typeof search === 'string' && search.trim()) {
     const q = `%${search.trim().toLowerCase()}%`;
     where.push(
-      `(LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(COALESCE(u.email, '')) LIKE ? OR LOWER(COALESCE(sp.student_code, '')) LIKE ? OR LOWER(COALESCE(sp.class_name, '')) LIKE ? OR LOWER(COALESCE(tp.staff_code, '')) LIKE ? OR LOWER(COALESCE(cp.staff_code, '')) LIKE ?)`
+      `(LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(COALESCE(u.email, '')) LIKE ? OR LOWER(COALESCE(sp.student_code, '')) LIKE ? OR LOWER(COALESCE(sp.class_name, '')) LIKE ? OR LOWER(COALESCE(cp.staff_code, '')) LIKE ?)`
     );
-    params.push(q, q, q, q, q, q, q);
+    params.push(q, q, q, q, q, q);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -316,7 +306,6 @@ adminRouter.get('/users', (req, res) => {
     `SELECT u.id
      FROM users u
      LEFT JOIN student_profiles sp ON sp.user_id = u.id
-     LEFT JOIN teacher_profiles tp ON tp.user_id = u.id
      LEFT JOIN chef_profiles cp ON cp.user_id = u.id
      ${whereSql}
      ORDER BY u.role ASC, u.full_name ASC`,
@@ -355,19 +344,16 @@ adminRouter.post('/users', async (req, res) => {
       address,
       emergencyContact,
       linkedStudentIds,
-      // Teacher / Chef fields
+      // Chef fields
       staffCode,
-      department,
-      homeroomClass,
-      canPlaceOrdersOverride,
       station,
       shift,
     } = req.body || {};
 
-    const validRoles: UserRole[] = ['admin', 'parent', 'student', 'teacher', 'chef'];
+    const validRoles: UserRole[] = ['admin', 'parent', 'student', 'chef'];
     if (!fullName || !username || !password || !validRoles.includes(role)) {
       res.status(400).json({
-        error: 'Full Name, Username, Password, and a valid Role (admin, parent, student, teacher, chef) are required.',
+        error: 'Full Name, Username, Password, and a valid Role (admin, parent, student, chef) are required.',
       });
       return;
     }
@@ -456,22 +442,6 @@ adminRouter.post('/users', async (req, res) => {
             );
           }
         }
-      } else if (role === 'teacher') {
-        const code =
-          staffCode && String(staffCode).trim()
-            ? String(staffCode).trim().toUpperCase()
-            : `BRS-TCH-${String(createdUserId).padStart(3, '0')}`;
-        db.run(
-          `INSERT INTO teacher_profiles (user_id, staff_code, department, homeroom_class, can_place_orders_override)
-           VALUES (?, ?, ?, ?, ?)`,
-          createdUserId,
-          code,
-          department ? String(department).trim() : 'General Academics',
-          homeroomClass ? String(homeroomClass).trim() : null,
-          canPlaceOrdersOverride === undefined || canPlaceOrdersOverride === null
-            ? null
-            : Boolean(canPlaceOrdersOverride)
-        );
       } else if (role === 'chef') {
         const code =
           staffCode && String(staffCode).trim()
@@ -602,23 +572,6 @@ adminRouter.put('/users/:id', (req, res) => {
           targetId,
           address ? String(address).trim() : null,
           emergencyContact ? String(emergencyContact).trim() : null
-        );
-      } else if (existing.role === 'teacher') {
-        db.run(
-          `UPDATE teacher_profiles
-           SET staff_code = COALESCE(?, staff_code),
-               department = COALESCE(?, department),
-               homeroom_class = ?,
-               can_place_orders_override = ?,
-               updated_at = datetime('now')
-           WHERE user_id = ?`,
-          staffCode ? String(staffCode).trim().toUpperCase() : null,
-          department ? String(department).trim() : null,
-          homeroomClass !== undefined ? (homeroomClass ? String(homeroomClass).trim() : null) : null,
-          canPlaceOrdersOverride === null || canPlaceOrdersOverride === undefined
-            ? null
-            : Boolean(canPlaceOrdersOverride),
-          targetId
         );
       } else if (existing.role === 'chef') {
         db.run(
@@ -1180,7 +1133,6 @@ adminRouter.get('/settings', (_req, res) => {
       schoolName: map.school_name || 'Bright Riders School',
       schoolCampus: map.school_campus || 'Abu Dhabi Campus, UAE',
       currencyCode: map.currency_code || 'AED',
-      teacherOrderingEnabled: map.teacher_ordering_enabled !== 'false',
       cancellationCutoffMinutes: Number(map.cancellation_cutoff_minutes || 60),
       collectionSlots,
     },
@@ -1190,18 +1142,9 @@ adminRouter.get('/settings', (_req, res) => {
 adminRouter.put('/settings', (req, res) => {
   try {
     const db = getDb();
-    const { teacherOrderingEnabled, cancellationCutoffMinutes, collectionSlots } = req.body || {};
+    const { cancellationCutoffMinutes, collectionSlots } = req.body || {};
 
     db.transaction(() => {
-      if (teacherOrderingEnabled !== undefined) {
-        db.run(
-          `INSERT INTO platform_settings (key, value, updated_by, updated_at)
-           VALUES ('teacher_ordering_enabled', ?, ?, datetime('now'))
-           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = datetime('now')`,
-          Boolean(teacherOrderingEnabled) ? 'true' : 'false',
-          req.user!.id
-        );
-      }
       if (cancellationCutoffMinutes !== undefined) {
         db.run(
           `INSERT INTO platform_settings (key, value, updated_by, updated_at)
@@ -1226,13 +1169,13 @@ adminRouter.put('/settings', (req, res) => {
         action: 'UPDATE_PLATFORM_SETTINGS',
         targetType: 'settings',
         targetId: 'global',
-        details: { teacherOrderingEnabled, cancellationCutoffMinutes },
+        details: { cancellationCutoffMinutes },
         ipAddress: req.ip,
       });
     });
 
     eventHub.broadcast('settings.updated', {
-      teacherOrderingEnabled: Boolean(teacherOrderingEnabled),
+      cancellationCutoffMinutes,
     });
 
     res.json({ message: 'Platform settings updated.' });

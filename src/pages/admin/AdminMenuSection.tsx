@@ -23,7 +23,7 @@ export const AdminMenuSection: React.FC = () => {
   const [categories, setCategories] = useState<FoodCategory[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [selectedCat, setSelectedCat] = useState<number | 'all'>('all');
-  const [teacherOrderingEnabled, setTeacherOrderingEnabled] = useState(true);
+  const [cancellationCutoffMinutes, setCancellationCutoffMinutes] = useState(60);
 
   // Category Form
   const [catName, setCatName] = useState('');
@@ -58,7 +58,7 @@ export const AdminMenuSection: React.FC = () => {
       ]);
       setCategories(menuRes.categories);
       setItems(menuRes.items);
-      setTeacherOrderingEnabled(setRes.settings.teacherOrderingEnabled !== false);
+      setCancellationCutoffMinutes(Number(setRes.settings.cancellationCutoffMinutes ?? 60));
       if (menuRes.categories.length > 0 && !itemCategoryId) {
         setItemCategoryId(menuRes.categories[0].id);
       }
@@ -231,17 +231,13 @@ export const AdminMenuSection: React.FC = () => {
     }
   };
 
-  const handleToggleTeacherOrdering = async (next: boolean) => {
-    setTeacherOrderingEnabled(next);
+  const handleSaveCutoff = async (mins: number) => {
+    setCancellationCutoffMinutes(mins);
     await apiFetch('/api/admin/settings', {
       method: 'PUT',
-      body: JSON.stringify({ teacherOrderingEnabled: next }),
+      body: JSON.stringify({ cancellationCutoffMinutes: mins }),
     });
-    showToast(
-      next ? 'Teacher Ordering Enabled' : 'Teacher Ordering Disabled',
-      'info',
-      'Updated live across Teacher dashboards.'
-    );
+    showToast('Canteen Policy Updated', 'info', `Order cancellation cutoff set to ${mins} minutes.`);
   };
 
   const visibleItems =
@@ -286,21 +282,19 @@ export const AdminMenuSection: React.FC = () => {
           <div className="flex items-center gap-2.5">
             <Settings2 className="w-5 h-5 text-brs-royal shrink-0" />
             <div>
-              <p className="text-xs font-bold text-slate-900">Teacher Ordering</p>
-              <p className="text-[11px] text-slate-500">Allow teachers to place personal orders</p>
+              <p className="text-xs font-bold text-slate-900">Cancellation Cutoff</p>
+              <p className="text-[11px] text-slate-500">Minutes before prep lockout</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => handleToggleTeacherOrdering(!teacherOrderingEnabled)}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition ${
-              teacherOrderingEnabled
-                ? 'bg-emerald-600 text-white'
-                : 'bg-slate-200 text-slate-700'
-            }`}
+          <select
+            value={cancellationCutoffMinutes}
+            onChange={(e) => handleSaveCutoff(Number(e.target.value))}
+            className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-bold"
           >
-            {teacherOrderingEnabled ? 'Enabled' : 'Disabled'}
-          </button>
+            <option value={30}>30 mins</option>
+            <option value={60}>60 mins</option>
+            <option value={120}>120 mins</option>
+          </select>
         </div>
       </div>
 

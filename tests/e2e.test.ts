@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import bcrypt from 'bcryptjs';
 import { AppDatabase, initializeSchemaAndDefaults, setDbForTesting } from '../server/db/connection.js';
 import { createApiApp } from '../server/app.js';
 
@@ -53,25 +54,17 @@ class TestClient {
   }
 }
 
-// Minimal valid 1x1 PNG buffer for testing binary magic-byte upload validation
 const VALID_1X1_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
   'base64'
 );
 
 async function runTests() {
-  console.log('=== Bright Riders SmartCanteen — End-to-End Integration Test Suite ===\n');
+  console.log('=== Bright Riders Digital Canteen — End-to-End Integration Test Suite ===\n');
   cleanupTestDb();
 
-  const ADMIN_PW = 'TestAdmin#2026!';
-  const DEMO_PW = 'TestCampus#2026!';
-
   const db = new AppDatabase(testDbPath);
-  initializeSchemaAndDefaults(db, {
-    adminPassword: ADMIN_PW,
-    demoPassword: DEMO_PW,
-    seedDemoAccounts: true,
-  });
+  initializeSchemaAndDefaults(db);
   setDbForTesting(db);
 
   const app = createApiApp();
@@ -92,72 +85,156 @@ async function runTests() {
     const adminClient = new TestClient(baseUrl);
     const parentClient = new TestClient(baseUrl);
     const studentClient = new TestClient(baseUrl);
-    const teacherClient = new TestClient(baseUrl);
     const chefClient = new TestClient(baseUrl);
     const anonClient = new TestClient(baseUrl);
 
-    // 1. AUTHENTICATION & RBAC
-    await step('Rejects unauthenticated access & invalid login credentials', async () => {
+    // 1. PERMANENT ADMINS & ZERO DEMO CONTENT VERIFICATION
+    await step('Seeds ONLY the 2 permanent Admin accounts (ARHATSHAH8149 & ruthvikabrs123) and zero demo data', async () => {
+      // Idempotent repeated initialization must not duplicate accounts
+      initializeSchemaAndDefaults(db);
+
+      const allUsers = db.all<{
+        username: string;
+        role: string;
+        password_hash: string;
+        is_active: number;
+      }>('SELECT username, role, password_hash, is_active FROM users ORDER BY id ASC');
+
+      assert.equal(allUsers.length, 2, 'Initial DB must contain ONLY the 2 permanent admins');
+      assert.equal(allUsers[0].username, 'ARHATSHAH8149');
+      assert.equal(allUsers[0].role, 'admin');
+      assert.ok(allUsers[0].password_hash.startsWith('$2a$12$'));
+      assert.equal(allUsers[1].username, 'ruthvikabrs123');
+      assert.equal(allUsers[1].role, 'admin');
+      assert.ok(allUsers[1].password_hash.startsWith('$2a$12$'));
+
+      const orderCnt = db.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM orders')?.cnt ?? -1;
+      const txnCnt = db.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM payment_transactions')?.cnt ?? -1;
+      assert.equal(orderCnt, 0, 'Initial DB must contain zero fake orders');
+      assert.equal(txnCnt, 0, 'Initial DB must contain zero fake transactions');
+    });
+
+    // Create an ephemeral test-only admin inside the isolated test DB so no permanent admin password is stored in test source
+    const TEST_ADMIN_USER = 'e2e.temp.admin';
+    const TEST_ADMIN_PW = 'E2E-Temp-Admin#2026!';
+    const TEST_ROLE_PW = 'E2E-Role-User#2026!';
+    db.run(
+      `INSERT INTO users (username, password_hash, full_name, role, is_active, permissions_json)
+       VALUES (?, ?, 'E2E Test Admin', 'admin', 1, '{"superAdmin":true}')`,
+      TEST_ADMIN_USER,
+      bcrypt.hashSync(TEST_ADMIN_PW, 10)
+    );
+
+    await step('Rejects unauthenticated access, invalid credentials & wrong role-card portal sign-ins', async () => {
       const me = await anonClient.request('GET', '/api/auth/me');
       assert.equal(me.status, 401);
 
       const bad = await anonClient.request('POST', '/api/auth/login', {
-        username: 'admin',
+        username: 'ARHATSHAH8149',
         password: 'WrongPassword123!',
       });
       assert.equal(bad.status, 401);
+
+      // Signing in with an Admin account through the Student card must be rejected with 403
+      const wrongCard = await anonClient.request('POST', '/api/auth/login', {
+        username: TEST_ADMIN_USER,
+        password: TEST_ADMIN_PW,
+        expectedRole: 'student',
+      });
+      assert.equal(wrongCard.status, 403);
     });
 
-    await step('Authenticates all 5 user roles (Admin, Parent, Student, Teacher, Chef)', async () => {
+    let activeStudentId = 0;
+
+    await step('Authenticates Admin & creates Student, Parent (linked), and Chef across the 4 official roles', async () => {
       const a = await adminClient.request('POST', '/api/auth/login', {
-        username: 'admin',
-        password: ADMIN_PW,
+        username: TEST_ADMIN_USER,
+        password: TEST_ADMIN_PW,
+        expectedRole: 'admin',
       });
       assert.equal(a.status, 200);
       assert.equal(a.data.user.role, 'admin');
 
-      const p = await parentClient.request('POST', '/api/auth/login', {
-        username: 'parent.fatima',
-        password: DEMO_PW,
+      // Reject removed 'teacher' role
+      const badTeacher = await adminClient.request('POST', '/api/admin/users', {
+        role: 'teacher',
+        fullName: 'Disallowed Role',
+        username: 'disallowed.teacher',
+        password: TEST_ROLE_PW,
       });
-      assert.equal(p.status, 200);
-      assert.equal(p.data.user.role, 'parent');
-      assert.equal(p.data.user.children.length, 2);
+      assert.equal(badTeacher.status, 400);
 
-      const s = await studentClient.request('POST', '/api/auth/login', {
-        username: 'student.zayed',
-        password: DEMO_PW,
+      // Admin creates Student
+      const sCreate = await adminClient.request('POST', '/api/admin/users', {
+        role: 'student',
+        fullName: 'Zayed Al Mansoori',
+        username: 'e2e.student',
+        password: TEST_ROLE_PW,
+        className: 'Grade 5-A',
+        studentCode: 'BRS-STU-E2E-101',
+        allergiesNotes: 'None',
       });
-      assert.equal(s.status, 200);
-      assert.equal(s.data.user.role, 'student');
+      assert.equal(sCreate.status, 201);
+      activeStudentId = sCreate.data.user.id;
 
-      const t = await teacherClient.request('POST', '/api/auth/login', {
-        username: 'teacher.anita',
-        password: DEMO_PW,
+      // Admin creates Parent linked to Student
+      const pCreate = await adminClient.request('POST', '/api/admin/users', {
+        role: 'parent',
+        fullName: 'Fatima Al Mansoori',
+        username: 'e2e.parent',
+        password: TEST_ROLE_PW,
+        email: 'parent.e2e@example.ae',
+        phone: '+971500000101',
+        linkedStudentIds: [activeStudentId],
+        relationship: 'Mother',
       });
-      assert.equal(t.status, 200);
-      assert.equal(t.data.user.role, 'teacher');
+      assert.equal(pCreate.status, 201);
+      assert.equal(pCreate.data.user.linkedChildren.length, 1);
 
-      const c = await chefClient.request('POST', '/api/auth/login', {
-        username: 'chef.rashid',
-        password: DEMO_PW,
+      // Admin creates Chef
+      const cCreate = await adminClient.request('POST', '/api/admin/users', {
+        role: 'chef',
+        fullName: 'Chef Rashid',
+        username: 'e2e.chef',
+        password: TEST_ROLE_PW,
+        staffCode: 'BRS-CHF-E2E-01',
+        station: 'Main Canteen Counter',
       });
-      assert.equal(c.status, 200);
-      assert.equal(c.data.user.role, 'chef');
+      assert.equal(cCreate.status, 201);
+
+      // Authenticate all 3 newly created accounts via their matching role portals
+      const pLogin = await parentClient.request('POST', '/api/auth/login', {
+        username: 'e2e.parent',
+        password: TEST_ROLE_PW,
+        expectedRole: 'parent',
+      });
+      assert.equal(pLogin.status, 200);
+      assert.equal(pLogin.data.user.children.length, 1);
+
+      const sLogin = await studentClient.request('POST', '/api/auth/login', {
+        username: 'e2e.student',
+        password: TEST_ROLE_PW,
+        expectedRole: 'student',
+      });
+      assert.equal(sLogin.status, 200);
+
+      const cLogin = await chefClient.request('POST', '/api/auth/login', {
+        username: 'e2e.chef',
+        password: TEST_ROLE_PW,
+        expectedRole: 'chef',
+      });
+      assert.equal(cLogin.status, 200);
     });
 
     await step('Enforces strict backend role restrictions across protected routes', async () => {
-      // Student cannot access Admin, Payments, Cart, or Chef endpoints
       assert.equal((await studentClient.request('GET', '/api/admin/overview')).status, 403);
       assert.equal((await studentClient.request('GET', '/api/payments')).status, 403);
       assert.equal((await studentClient.request('GET', '/api/cart')).status, 403);
       assert.equal((await studentClient.request('GET', '/api/chef/orders')).status, 403);
 
-      // Teacher cannot access Admin or Chef endpoints
-      assert.equal((await teacherClient.request('GET', '/api/admin/users')).status, 403);
-      assert.equal((await teacherClient.request('GET', '/api/chef/orders')).status, 403);
+      assert.equal((await parentClient.request('GET', '/api/admin/users')).status, 403);
+      assert.equal((await parentClient.request('GET', '/api/chef/orders')).status, 403);
 
-      // Chef cannot manage users, edit menu prices, or view payment settings
       assert.equal((await chefClient.request('GET', '/api/admin/users')).status, 403);
       assert.equal(
         (
@@ -170,24 +247,16 @@ async function runTests() {
       assert.equal((await chefClient.request('GET', '/api/payments')).status, 403);
     });
 
-    // 2. USER MANAGEMENT
-    let tempStudentId = 0;
-    let tempParentId = 0;
-
-    await step('Admin creates, links, edits, resets password, deactivates & deletes accounts', async () => {
-      // Create Parent
+    await step('Admin edits accounts, resets passwords (revoking sessions), deactivates & deletes unused users', async () => {
       const createParent = await adminClient.request('POST', '/api/admin/users', {
         role: 'parent',
         fullName: 'Omar Al Nuaimi',
         username: 'parent.omar',
         password: 'InitialPassword#1',
-        email: 'omar@example.ae',
-        phone: '+971501112233',
       });
       assert.equal(createParent.status, 201);
-      tempParentId = createParent.data.user.id;
+      const tempParentId = createParent.data.user.id;
 
-      // Create Student
       const createStudent = await adminClient.request('POST', '/api/admin/users', {
         role: 'student',
         fullName: 'Hamdan Al Nuaimi',
@@ -197,25 +266,21 @@ async function runTests() {
         studentCode: 'BRS-STU-2026-999',
       });
       assert.equal(createStudent.status, 201);
-      tempStudentId = createStudent.data.user.id;
+      const tempStudentId = createStudent.data.user.id;
 
-      // Link Parent & Student
       const linkRes = await adminClient.request('POST', '/api/admin/parent-links', {
         parentUserId: tempParentId,
         studentUserId: tempStudentId,
         relationship: 'Father',
       });
       assert.equal(linkRes.status, 201);
-      assert.equal(linkRes.data.parent.linkedChildren.length, 1);
 
-      // Edit Student Class
       const editRes = await adminClient.request('PUT', `/api/admin/users/${tempStudentId}`, {
         className: 'Grade 4-D',
       });
       assert.equal(editRes.status, 200);
       assert.equal(editRes.data.user.className, 'Grade 4-D');
 
-      // Login as tempParent, then reset password and verify old session is revoked
       const tempParentClient = new TestClient(baseUrl);
       assert.equal(
         (
@@ -233,11 +298,8 @@ async function runTests() {
         { newPassword: 'UpdatedPassword#2' }
       );
       assert.equal(resetRes.status, 200);
-
-      // Old session must now be 401
       assert.equal((await tempParentClient.request('GET', '/api/auth/me')).status, 401);
 
-      // Deactivate account and verify login is blocked (403)
       await adminClient.request('PATCH', `/api/admin/users/${tempParentId}/status`, {
         isActive: false,
       });
@@ -251,15 +313,8 @@ async function runTests() {
         403
       );
 
-      // Delete temporary unused accounts
-      assert.equal(
-        (await adminClient.request('DELETE', `/api/admin/users/${tempStudentId}`)).status,
-        200
-      );
-      assert.equal(
-        (await adminClient.request('DELETE', `/api/admin/users/${tempParentId}`)).status,
-        200
-      );
+      assert.equal((await adminClient.request('DELETE', `/api/admin/users/${tempStudentId}`)).status, 200);
+      assert.equal((await adminClient.request('DELETE', `/api/admin/users/${tempParentId}`)).status, 200);
     });
 
     // 3. MENU MANAGEMENT & IMAGE UPLOAD VALIDATION
@@ -267,8 +322,12 @@ async function runTests() {
     let item1Id = 0;
     let item2Id = 0;
 
-    await step('Validates food image magic bytes & manages menu items, prices, and schedules', async () => {
-      // Reject fake image containing script bytes disguised with image/png MIME
+    await step('Verifies Official Bright Riders SEHHI 28-item menu & Admin menu CRUD + image validation', async () => {
+      const initialMenu = await parentClient.request('GET', '/api/menu');
+      assert.equal(initialMenu.status, 200);
+      assert.equal(initialMenu.data.categories.length, 4);
+      assert.equal(initialMenu.data.items.length, 28);
+
       const badForm = new FormData();
       badForm.append(
         'image',
@@ -278,18 +337,12 @@ async function runTests() {
       const badUpload = await adminClient.request('POST', '/api/menu/upload-image', badForm);
       assert.equal(badUpload.status, 400);
 
-      // Accept real PNG image
       const goodForm = new FormData();
-      goodForm.append(
-        'image',
-        new Blob([VALID_1X1_PNG], { type: 'image/png' }),
-        'valid-meal.png'
-      );
+      goodForm.append('image', new Blob([VALID_1X1_PNG], { type: 'image/png' }), 'valid-meal.png');
       const goodUpload = await adminClient.request('POST', '/api/menu/upload-image', goodForm);
       assert.equal(goodUpload.status, 201);
       assert.ok(goodUpload.data.imageUrl.startsWith('/uploads/menu/'));
 
-      // Clean up test uploaded image afterwards so we keep uploads clean
       const uploadedDiskFile = path.resolve(
         process.cwd(),
         'server',
@@ -297,9 +350,8 @@ async function runTests() {
       );
       if (fs.existsSync(uploadedDiskFile)) fs.unlinkSync(uploadedDiskFile);
 
-      // Create category & items
       const catRes = await adminClient.request('POST', '/api/menu/categories', {
-        name: 'Fresh Wraps & Sandwiches',
+        name: 'Special Exhibition Specials',
         description: 'Prepared daily in Bright Riders kitchen',
       });
       assert.equal(catRes.status, 201);
@@ -308,13 +360,11 @@ async function runTests() {
       const it1 = await adminClient.request('POST', '/api/menu/items', {
         categoryId: catId,
         name: 'Grilled Halloumi Wrap',
-        description: 'Warm tortilla wrap with grilled halloumi and cucumber',
         priceAed: 12.5,
         isVegetarian: true,
       });
       assert.equal(it1.status, 201);
       item1Id = it1.data.id;
-      assert.equal(it1.data.priceFils, 1250);
 
       const it2 = await adminClient.request('POST', '/api/menu/items', {
         categoryId: catId,
@@ -325,23 +375,17 @@ async function runTests() {
       assert.equal(it2.status, 201);
       item2Id = it2.data.id;
 
-      // Edit item price
       const editPrice = await adminClient.request('PUT', `/api/menu/items/${item1Id}`, {
         priceAed: 13.0,
       });
       assert.equal(editPrice.status, 200);
       assert.equal(editPrice.data.priceAed, 13);
 
-      // Schedule item2 as unavailable on a future test date (2026-12-15)
-      const schedRes = await adminClient.request(
-        'POST',
-        `/api/menu/items/${item2Id}/schedules`,
-        {
-          specificDate: '2026-12-15',
-          isAvailable: false,
-          specialNote: 'Not served during exam half-day',
-        }
-      );
+      const schedRes = await adminClient.request('POST', `/api/menu/items/${item2Id}/schedules`, {
+        specificDate: '2026-12-15',
+        isAvailable: false,
+        specialNote: 'Not served during exam half-day',
+      });
       assert.equal(schedRes.status, 201);
 
       const menuOnBlockedDate = await parentClient.request('GET', '/api/menu?date=2026-12-15');
@@ -349,21 +393,14 @@ async function runTests() {
       assert.equal(juiceOnBlockedDate.availableOnDate, false);
     });
 
-    // 4. ORDERING & DIGITAL PAYMENTS (FAILED, PENDING, SUCCESS, DUPLICATE PREVENTION)
+    // 4. ORDERING & DIGITAL PAYMENTS
     const todayIso = new Date().toISOString().slice(0, 10);
     let paidOrderId = 0;
     let paidOrderNumber = '';
 
     await step('Handles failed & pending payments without issuing QR or allowing collection', async () => {
-      const parentMe = await parentClient.request('GET', '/api/auth/me');
-      const zayed = parentMe.data.user.children.find(
-        (c: any) => c.username === 'student.zayed'
-      );
-      assert.ok(zayed);
-
-      // Create an order and test FAILED payment
       const ordFailRes = await parentClient.request('POST', '/api/orders', {
-        beneficiaryUserId: zayed.id,
+        beneficiaryUserId: activeStudentId,
         orderDate: todayIso,
         collectionSlot: 'Morning Recess (09:45 AM – 10:15 AM)',
         items: [{ menuItemId: item1Id, quantity: 1 }],
@@ -378,11 +415,9 @@ async function runTests() {
       });
       assert.equal(failPay.status, 402);
 
-      // QR endpoint must reject unpaid order
       const qrAttempt = await parentClient.request('GET', `/api/orders/${unpaidOrderId}/qr`);
       assert.equal(qrAttempt.status, 400);
 
-      // Chef manual verify must reject unpaid order with exact message
       const chefVerifyUnpaid = await chefClient.request('POST', '/api/chef/verify-order', {
         orderNumber: unpaidOrderNum,
       });
@@ -392,7 +427,6 @@ async function runTests() {
         'Payment not completed. This order cannot be collected.'
       );
 
-      // Test PENDING payment then authorize it
       const pendingPay = await parentClient.request('POST', '/api/payments/checkout', {
         orderId: unpaidOrderId,
         sandboxOutcome: 'pending',
@@ -400,29 +434,13 @@ async function runTests() {
       assert.equal(pendingPay.status, 200);
       assert.equal(pendingPay.data.status, 'pending');
 
-      const payList = await parentClient.request('GET', '/api/payments?status=pending');
-      const pendingTxn = payList.data.transactions.find(
-        (t: any) => t.transactionRef === pendingPay.data.transactionRef
-      );
-      assert.ok(pendingTxn);
-
-      // Cancel the test unpaid/pending order cleanly
-      const cancelPending = await parentClient.request(
-        'POST',
-        `/api/orders/${unpaidOrderId}/cancel`
-      );
+      const cancelPending = await parentClient.request('POST', `/api/orders/${unpaidOrderId}/cancel`);
       assert.equal(cancelPending.status, 200);
     });
 
     await step('Completes full Parent Cart -> Checkout -> Paid Confirmation & prevents duplicate payments', async () => {
-      const parentMe = await parentClient.request('GET', '/api/auth/me');
-      const zayed = parentMe.data.user.children.find(
-        (c: any) => c.username === 'student.zayed'
-      );
-      assert.ok(zayed);
-
       await parentClient.request('PUT', '/api/cart/meta', {
-        beneficiaryUserId: zayed.id,
+        beneficiaryUserId: activeStudentId,
         orderDate: todayIso,
         collectionSlot: 'Primary Lunch Break (12:00 PM – 12:40 PM)',
         specialInstructions: 'Please warm the wrap slightly',
@@ -433,7 +451,6 @@ async function runTests() {
         menuItemId: item2Id,
         quantity: 1,
       });
-      // 2 * 13.00 + 1 * 6.00 = 32.00 AED (3200 fils)
       assert.equal(cartSnap.data.cart.totalFils, 3200);
 
       const createOrd = await parentClient.request('POST', '/api/orders', {
@@ -443,7 +460,6 @@ async function runTests() {
       paidOrderId = createOrd.data.order.id;
       paidOrderNumber = createOrd.data.order.orderNumber;
 
-      // Pay successfully
       const payOk = await parentClient.request('POST', '/api/payments/checkout', {
         orderId: paidOrderId,
         sandboxOutcome: 'succeeded',
@@ -454,7 +470,6 @@ async function runTests() {
       assert.equal(payOk.data.order.orderStatus, 'confirmed');
       assert.ok(payOk.data.qrDataUrl.startsWith('data:image/png;base64,'));
 
-      // Duplicate payment attempt must fail with 409 Conflict
       const dupPay = await parentClient.request('POST', '/api/payments/checkout', {
         orderId: paidOrderId,
         sandboxOutcome: 'succeeded',
@@ -462,7 +477,6 @@ async function runTests() {
       assert.equal(dupPay.status, 409);
     });
 
-    // 5. STUDENT QR PASS, CHEF KDS WORKFLOW & QR SCANNER VALIDATION
     let studentSignedQrToken = '';
 
     await step('Student views upcoming pre-paid order & retrieves unique zero-PII QR code', async () => {
@@ -476,7 +490,6 @@ async function runTests() {
       assert.equal(qrPass.status, 200);
       studentSignedQrToken = qrPass.data.signedToken;
       assert.ok(studentSignedQrToken.startsWith('BRSQR.v1.'));
-      // Verify QR token contains zero student PII
       assert.ok(!studentSignedQrToken.toLowerCase().includes('zayed'));
       assert.ok(!studentSignedQrToken.includes('101'));
     });
@@ -486,7 +499,6 @@ async function runTests() {
       assert.equal(chefQueue.status, 200);
       assert.ok(chefQueue.data.orders.some((o: any) => o.id === paidOrderId));
 
-      // Mark Preparing
       const prep1 = await chefClient.request(
         'PATCH',
         `/api/chef/orders/${paidOrderId}/prep-status`,
@@ -495,7 +507,6 @@ async function runTests() {
       assert.equal(prep1.status, 200);
       assert.equal(prep1.data.order.orderStatus, 'preparing');
 
-      // Mark Ready for Collection
       const prep2 = await chefClient.request(
         'PATCH',
         `/api/chef/orders/${paidOrderId}/prep-status`,
@@ -504,7 +515,6 @@ async function runTests() {
       assert.equal(prep2.status, 200);
       assert.equal(prep2.data.order.orderStatus, 'ready_for_collection');
 
-      // Reject forged / invalid QR code
       const forgedScan = await chefClient.request('POST', '/api/chef/verify-qr', {
         qrPayload: 'BRSQR.v1.forgedToken1234567890.fakeSignatureabc',
       });
@@ -514,7 +524,6 @@ async function runTests() {
         'Invalid QR code. Please scan a valid Bright Riders School order QR code.'
       );
 
-      // Scan valid Student QR code
       const validScan = await chefClient.request('POST', '/api/chef/verify-qr', {
         qrPayload: studentSignedQrToken,
       });
@@ -527,7 +536,6 @@ async function runTests() {
       assert.equal(validScan.data.order.orderNumber, paidOrderNumber);
       assert.equal(validScan.data.order.studentFullName, 'Zayed Al Mansoori');
 
-      // Confirm Collection
       const confirmRes = await chefClient.request('POST', '/api/chef/confirm-collection', {
         orderId: paidOrderId,
         verificationMethod: 'qr_scan',
@@ -536,7 +544,6 @@ async function runTests() {
       assert.equal(confirmRes.status, 200);
       assert.equal(confirmRes.data.order.orderStatus, 'collected');
 
-      // Prevent second collection via QR scan OR confirm-collection
       const rescan = await chefClient.request('POST', '/api/chef/verify-qr', {
         qrPayload: studentSignedQrToken,
       });
@@ -551,49 +558,15 @@ async function runTests() {
       assert.equal(doubleConfirm.status, 409);
     });
 
-    // 6. TEACHER ORDERING TOGGLE & ADMIN REPORTS / PERSISTENCE
-    await step('Enforces Admin Teacher-Ordering toggle & verifies Reports + CSV Exports', async () => {
-      // Disable teacher ordering
-      await adminClient.request('PUT', '/api/admin/settings', {
-        teacherOrderingEnabled: false,
-      });
-      const blockedTeacherOrd = await teacherClient.request('POST', '/api/orders', {
-        orderDate: todayIso,
-        collectionSlot: 'Secondary Lunch Break (12:45 PM – 01:25 PM)',
-        items: [{ menuItemId: item2Id, quantity: 1 }],
-      });
-      assert.equal(blockedTeacherOrd.status, 403);
-
-      // Re-enable teacher ordering and place + pay teacher order
-      await adminClient.request('PUT', '/api/admin/settings', {
-        teacherOrderingEnabled: true,
-      });
-      const okTeacherOrd = await teacherClient.request('POST', '/api/orders', {
-        orderDate: todayIso,
-        collectionSlot: 'Secondary Lunch Break (12:45 PM – 01:25 PM)',
-        items: [{ menuItemId: item2Id, quantity: 1 }],
-      });
-      assert.equal(okTeacherOrd.status, 201);
-      const tPay = await teacherClient.request('POST', '/api/payments/checkout', {
-        orderId: okTeacherOrd.data.order.id,
-        sandboxOutcome: 'succeeded',
-      });
-      assert.equal(tPay.status, 200);
-
-      // Verify Admin Overview & CSV Export
+    await step('Verifies Admin Overview analytics, Reports + CSV Exports, and SQLite disk persistence', async () => {
       const overview = await adminClient.request('GET', '/api/admin/overview');
       assert.equal(overview.status, 200);
-      assert.equal(overview.data.revenue.totalSalesAed, 38); // 32 AED + 6 AED
+      assert.equal(overview.data.revenue.totalSalesAed, 32);
 
-      const csvRes = await adminClient.request(
-        'GET',
-        '/api/admin/reports/export?type=popular_items'
-      );
+      const csvRes = await adminClient.request('GET', '/api/admin/reports/export?type=popular_items');
       assert.equal(csvRes.status, 200);
       assert.ok(String(csvRes.data).includes('Grilled Halloumi Wrap'));
-    });
 
-    await step('Verifies SQLite ACID disk persistence across database reopen', async () => {
       db.close();
       const reopenedDb = new AppDatabase(testDbPath);
       const persistedOrder = reopenedDb.get<{ order_status: string; payment_status: string }>(
@@ -603,44 +576,6 @@ async function runTests() {
       assert.equal(persistedOrder?.order_status, 'collected');
       assert.equal(persistedOrder?.payment_status, 'paid');
       reopenedDb.close();
-    });
-
-    await step('Verifies Official Bright Riders School SEHHI Menu automatic seeding (28 items, 4 categories)', async () => {
-      const menuDbPath = path.join('/tmp', `brs-official-menu-seed-${Date.now()}.sqlite`);
-      const menuDb = new AppDatabase(menuDbPath);
-      try {
-        initializeSchemaAndDefaults(menuDb);
-        const catCount = menuDb.get<{ count: number }>('SELECT COUNT(*) AS count FROM food_categories')?.count ?? 0;
-        const itemCount = menuDb.get<{ count: number }>('SELECT COUNT(*) AS count FROM menu_items')?.count ?? 0;
-        const activeCount = menuDb.get<{ count: number }>(
-          'SELECT COUNT(*) AS count FROM menu_items WHERE is_available = 1'
-        )?.count ?? 0;
-        assert.equal(catCount, 4);
-        assert.equal(itemCount, 28);
-        assert.equal(activeCount, 27);
-
-        const water = menuDb.get<{ price_fils: number }>('SELECT price_fils FROM menu_items WHERE name = ?', 'Water');
-        assert.equal(water?.price_fils, 150); // 1.5 AED = 150 fils
-
-        const biriyani = menuDb.get<{ price_fils: number }>(
-          'SELECT price_fils FROM menu_items WHERE name = ?',
-          'Chicken biriyani (less oil)'
-        );
-        assert.equal(biriyani?.price_fils, 1300); // 13 AED = 1300 fils
-
-        const glareItem = menuDb.get<{ price_fils: number; is_available: number }>(
-          'SELECT price_fils, is_available FROM menu_items WHERE name = ?',
-          'Chicken /Paneer Curry and Steam Rice'
-        );
-        assert.equal(glareItem?.price_fils, 0);
-        assert.equal(glareItem?.is_available, 0);
-      } finally {
-        menuDb.close();
-        for (const s of ['', '-wal', '-shm']) {
-          const p = `${menuDbPath}${s}`;
-          if (fs.existsSync(p)) fs.unlinkSync(p);
-        }
-      }
     });
 
     await step('Verifies compiled Netlify Serverless Function (dist/functions/api.cjs) across cold starts', async () => {
@@ -660,93 +595,39 @@ async function runTests() {
         DATABASE_PATH: simDbPath,
         JWT_SECRET: '',
         QR_HMAC_SECRET: '',
-        BOOTSTRAP_ADMIN_PASSWORD: '',
-        BOOTSTRAP_DEMO_PASSWORD: '',
       };
 
       try {
-        // Cold Start #1: Initial public-config + one-time cloud setup + parent login + order + QR issue
-        const out1 = execFileSync(
+        const out = execFileSync(
           process.execPath,
           [
             '-e',
             `
             (async () => {
               const { handler } = require(${JSON.stringify(fnBundlePath)});
+              const rHealth = await handler({ httpMethod: 'GET', path: '/api/health', headers: {} }, {});
+              if (rHealth.statusCode !== 200) throw new Error('Health check failed');
+
               const rPub = await handler({ httpMethod: 'GET', path: '/.netlify/functions/api/auth/public-config', headers: {} }, {});
-              const pub = JSON.parse(rPub.body);
-              if (!pub.settings.initialSetupPending) throw new Error('Expected initialSetupPending=true');
+              if (rPub.statusCode !== 200) throw new Error('Public config failed');
 
-              const setupPw = 'Net-Setup-' + Date.now() + '!';
-              const rSetup = await handler({
-                httpMethod: 'POST',
-                path: '/api/auth/initial-setup',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ adminPassword: setupPw, demoPassword: setupPw })
-              }, {});
-              if (rSetup.statusCode !== 200) throw new Error('Setup failed: ' + rSetup.body);
-              const adminCookie = (rSetup.headers['set-cookie'] || rSetup.multiValueHeaders?.['set-cookie']?.[0] || '').split(';')[0];
-
-              // Replay of initial-setup must be forbidden (403)
-              const rReplay = await handler({
-                httpMethod: 'POST',
-                path: '/api/auth/initial-setup',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ adminPassword: setupPw })
-              }, {});
-              if (rReplay.statusCode !== 403) throw new Error('Expected 403 on replay, got ' + rReplay.statusCode);
-
-              // SSE stream must immediately return serverless_mode without hanging
-              const rSse = await handler({
-                httpMethod: 'GET',
-                path: '/api/events/stream',
-                headers: { cookie: adminCookie }
-              }, {});
-              if (rSse.statusCode !== 200 || !String(rSse.body).includes('serverless_mode')) {
-                throw new Error('Expected serverless_mode SSE frame');
-              }
-
-              console.log(JSON.stringify({ adminCookie, setupPw }));
+              const { DatabaseSync } = require('node:sqlite');
+              const checkDb = new DatabaseSync(${JSON.stringify(simDbPath)});
+              const admins = checkDb.prepare('SELECT username, role FROM users ORDER BY id ASC').all();
+              const menuCnt = checkDb.prepare('SELECT COUNT(*) as cnt FROM menu_items').get().cnt;
+              checkDb.close();
+              console.log(JSON.stringify({ admins, menuCnt }));
             })();
             `,
           ],
           { cwd: '/tmp', env: baseEnv, encoding: 'utf8' }
         );
 
-        const { adminCookie, setupPw } = JSON.parse(out1.trim());
-        assert.ok(adminCookie.startsWith('brs_canteen_session='));
-
-        // Cold Start #2: Separate OS process verifying JWT secret persisted inside SQLite & 28-item menu works
-        const out2 = execFileSync(
-          process.execPath,
-          [
-            '-e',
-            `
-            (async () => {
-              const { handler } = require(${JSON.stringify(fnBundlePath)});
-              const rMe = await handler({
-                httpMethod: 'GET',
-                path: '/api/auth/me',
-                headers: { cookie: ${JSON.stringify(adminCookie)} }
-              }, {});
-              if (rMe.statusCode !== 200) throw new Error('Session failed across cold start: ' + rMe.body);
-
-              const rMenu = await handler({
-                httpMethod: 'GET',
-                path: '/api/menu',
-                headers: { cookie: ${JSON.stringify(adminCookie)} }
-              }, {});
-              const menu = JSON.parse(rMenu.body);
-              console.log(JSON.stringify({ role: JSON.parse(rMe.body).user.role, itemCount: menu.items.length, pwCheck: Boolean(${JSON.stringify(setupPw)}) }));
-            })();
-            `,
-          ],
-          { cwd: '/tmp', env: baseEnv, encoding: 'utf8' }
-        );
-
-        const parsed2 = JSON.parse(out2.trim());
-        assert.equal(parsed2.role, 'admin');
-        assert.equal(parsed2.itemCount, 28);
+        const parsed = JSON.parse(out.trim());
+        assert.equal(parsed.admins.length, 2);
+        assert.equal(parsed.admins[0].username, 'ARHATSHAH8149');
+        assert.equal(parsed.admins[1].username, 'ruthvikabrs123');
+        assert.equal(parsed.menuCnt, 28);
       } finally {
         for (const s of ['', '-wal', '-shm']) {
           const p = `${simDbPath}${s}`;

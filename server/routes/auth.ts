@@ -30,13 +30,10 @@ function getPlatformPublicSettings() {
     schoolName: map.school_name || config.schoolName,
     schoolCampus: map.school_campus || config.schoolCampus,
     currencyCode: map.currency_code || config.currencyCode,
-    teacherOrderingEnabled: map.teacher_ordering_enabled !== 'false',
     cancellationCutoffMinutes: Number(map.cancellation_cutoff_minutes || 60),
     collectionSlots,
     paymentMode: config.isStripeConfigured ? 'stripe' : 'brs_sandbox_aed',
     stripePublishableKey: config.isStripeConfigured ? config.stripePublishableKey : null,
-    initialSetupPending:
-      map.initial_cloud_setup_pending === 'true' && !config.bootstrapAdminPassword,
   };
 }
 
@@ -158,23 +155,6 @@ function buildUserAccountPayload(userId: number) {
           })),
         }
       : null;
-  } else if (user.role === 'teacher') {
-    const tp = db.get<{
-      staff_code: string;
-      department: string;
-      homeroom_class: string | null;
-      can_place_orders_override: number | null;
-    }>('SELECT * FROM teacher_profiles WHERE user_id = ?', user.id);
-
-    base.teacherProfile = tp
-      ? {
-          staffCode: tp.staff_code,
-          department: tp.department,
-          homeroomClass: tp.homeroom_class,
-          canPlaceOrdersOverride:
-            tp.can_place_orders_override === null ? null : Boolean(tp.can_place_orders_override),
-        }
-      : null;
   } else if (user.role === 'chef') {
     const cp = db.get<{
       staff_code: string;
@@ -200,7 +180,7 @@ authRouter.get('/public-config', (_req, res) => {
 
 authRouter.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body || {};
+    const { username, password, expectedRole } = req.body || {};
     if (!username || !password || typeof username !== 'string' || typeof password !== 'string') {
       res.status(400).json({ error: 'Username and password are required.' });
       return;
@@ -226,6 +206,24 @@ authRouter.post('/login', async (req, res) => {
     const passwordValid = await bcrypt.compare(password, user.password_hash);
     if (!passwordValid) {
       res.status(401).json({ error: 'Invalid username or password.' });
+      return;
+    }
+
+    if (
+      expectedRole &&
+      typeof expectedRole === 'string' &&
+      ['student', 'parent', 'chef', 'admin'].includes(expectedRole) &&
+      user.role !== expectedRole
+    ) {
+      const roleLabels: Record<string, string> = {
+        student: 'Student',
+        parent: 'Parent',
+        chef: 'Chef',
+        admin: 'Admin',
+      };
+      res.status(403).json({
+        error: `This account belongs to the ${roleLabels[user.role] || user.role} portal. Please select the ${roleLabels[user.role] || user.role} card to sign in.`,
+      });
       return;
     }
 
@@ -530,98 +528,5 @@ authRouter.post('/link-child', authenticate, requireRole(['parent']), (req, res)
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'Failed to link student profile.' });
-  }
-});
-
-// One-time Cloud Deployment Password Initialization (only active when deployed without BOOTSTRAP_ADMIN_PASSWORD env var)
-authRouter.post('/initial-setup', async (req, res) => {
-  try {
-    const db = getDb();
-    const pendingRow = db.get<{ value: string }>(
-      `SELECT value FROM platform_settings WHERE key = 'initial_cloud_setup_pending'`
-    );
-
-    if (pendingRow?.value !== 'true' || Boolean(config.bootstrapAdminPassword)) {
-      res.status(403).json({
-        error: 'Initial cloud setup has already been completed for this deployment.',
-      });
-      return;
-    }
-
-    const { adminPassword, demoPassword } = req.body || {};
-    if (!adminPassword || String(adminPassword).length < 8) {
-      res.status(400).json({
-        error: 'Administrator password must be at least 8 characters.',
-      });
-      return;
-    }
-
-    const effectiveDemoPw =
-      demoPassword && String(demoPassword).length >= 8
-        ? String(demoPassword)
-        : String(adminPassword);
-
-    const adminHash = await bcrypt.hash(String(adminPassword), 12);
-    const demoHash = await bcrypt.hash(effectiveDemoPw, 12);
-
-    let adminUserId = 0;
-    db.transaction(() => {
-      const adminRow = db.get<{ id: number }>(
-        `SELECT id FROM users WHERE username = 'admin' AND role = 'admin'`
-      );
-      if (!adminRow) {
-        throw new Error('Bootstrap administrator account not found.');
-      }
-      adminUserId = adminRow.id;
-
-      db.run(
-        `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`,
-        adminHash,
-        adminUserId
-      );
-
-      db.run(
-        `UPDATE users SET password_hash = ?, updated_at = datetime('now')
-         WHERE username IN ('parent.fatima', 'student.zayed', 'student.mariam', 'teacher.anita', 'chef.rashid')`,
-        demoHash
-      );
-
-      db.run(
-        `INSERT OR REPLACE INTO platform_settings (key, value, updated_by, updated_at)
-         VALUES ('initial_cloud_setup_pending', 'false', ?, datetime('now'))`,
-        adminUserId
-      );
-
-      db.run(
-        `INSERT INTO admin_activity_logs (actor_user_id, action, target_type, target_id, details_json, ip_address)
-         VALUES (?, 'INITIAL_CLOUD_SETUP', 'system', '1', ?, ?)`,
-        adminUserId,
-        JSON.stringify({ note: 'One-time cloud deployment credentials initialized' }),
-        req.ip || null
-      );
-    });
-
-    const { token, expiresAt } = createSessionToken({
-      userId: adminUserId,
-      role: 'admin',
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'],
-    });
-
-    res.cookie(SESSION_COOKIE_NAME, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
-      expires: expiresAt,
-      path: '/',
-    });
-
-    res.json({
-      message: 'Cloud deployment credentials initialized! Signed in as Administrator.',
-      user: buildUserAccountPayload(adminUserId),
-      settings: getPlatformPublicSettings(),
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Initial setup failed.' });
   }
 });

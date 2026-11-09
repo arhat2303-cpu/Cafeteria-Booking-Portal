@@ -98,7 +98,7 @@ export const QrPassModal: React.FC<QrPassModalProps> = ({ orderId, onClose }) =>
               </div>
 
               {/* Crisp Scannable QR Frame */}
-              <div className="relative p-4 rounded-2xl bg-white border-2 border-brs-navy/15 shadow-soft mb-4">
+              <div className="qr-white-surface relative p-4 rounded-2xl bg-white border-2 border-[#CCF32F]/40 shadow-soft mb-4">
                 <img
                   src={pass.qrDataUrl}
                   alt={`Order QR Code ${pass.orderNumber}`}

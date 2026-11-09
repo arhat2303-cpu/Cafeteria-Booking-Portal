@@ -131,14 +131,14 @@ export const AdminOverviewSection: React.FC<AdminOverviewProps> = ({ data }) => 
         </div>
       </div>
 
-      {/* User Role Breakdown Cards */}
+      {/* User Role Breakdown Cards (4 Official Roles + Total) */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
-          { label: 'Total Users', val: data.users.total, icon: Users, cls: 'text-brs-navy' },
-          { label: 'Students', val: data.users.students, icon: GraduationCap, cls: 'text-emerald-700' },
-          { label: 'Parents', val: data.users.parents, icon: Users, cls: 'text-sky-700' },
-          { label: 'Teachers', val: data.users.teachers, icon: BookOpen, cls: 'text-violet-700' },
-          { label: 'Chefs', val: data.users.chefs, icon: ChefHat, cls: 'text-amber-700' },
+          { label: 'Total Users', val: data.users.total, icon: Users, cls: 'text-[#CCF32F]' },
+          { label: 'Students', val: data.users.students, icon: GraduationCap, cls: 'text-[#5CE1E6]' },
+          { label: 'Parents', val: data.users.parents, icon: Users, cls: 'text-[#CCF32F]' },
+          { label: 'Chefs', val: data.users.chefs, icon: ChefHat, cls: 'text-[#FFB020]' },
+          { label: 'Admins', val: data.users.admins, icon: Users, cls: 'text-[#A78BFA]' },
         ].map((c) => {
           const Icon = c.icon;
           return (
