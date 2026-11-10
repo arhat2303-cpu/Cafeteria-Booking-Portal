@@ -15,7 +15,7 @@
     "db:seed-menu": "tsx server/scripts/seed-official-menu.ts",
     "test": "tsx tests/e2e.test.ts",
     "verify:serverless": "node scripts/verify-netlify-bundle.mjs",
-    "verify:blobs": "node scripts/verify-blobs-persistence.mjs",
+    "verify:blobs": "node scripts/verify-blobs-persistence.mjs && node scripts/verify-blobs-persistence.mjs --lambda-event",
     "verify:login-ui": "node scripts/verify-login-ui.mjs",
     "verify": "npm run build && npm run verify:serverless && npm run verify:blobs && npm run verify:login-ui"
   },

@@ -2,10 +2,9 @@
 /**
  * Verifies the Netlify Blobs persistence path of the deployed function artifact.
  *
- * A mock Netlify Blobs API (the same protocol `@netlify/blobs` speaks in production:
- * `/api/v1/blobs/...` → signed URL → GET/PUT) is started locally, `NETLIFY_BLOBS_CONTEXT`
- * is injected exactly like the Netlify runtime does, and `dist/functions/api.cjs` is run in
- * TWO SEPARATE Node processes to reproduce a genuine cold start + warm rehydration cycle.
+ * Runs the deployed artifact in separate cold-start processes against a mock Blobs service.
+ * Exercises both environment-based API access and Lambda event-based edge access,
+ * including a separate uncached endpoint required for strong consistency.
  *
  * Cold start #1 signs in as an Admin and creates a Chef account.
  * Cold start #2 must see that Chef account (proving the snapshot round-trips through Blobs)
@@ -21,10 +20,12 @@ const bundle = path.join(root, 'dist', 'functions', 'api.cjs');
 
 let rejectWrites = false;
 let rejectReads = false;
+const lambdaEventMode = process.argv.includes('--lambda-event');
+let strongReadCount = 0;
 const blobs = new Map(); // key -> { data: Buffer, metadata?: string }
 const etagOf = () => `"${crypto.randomUUID()}"`;
 
-const mock = http.createServer((req, res) => {
+const handleMock = (req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
@@ -36,6 +37,33 @@ const mock = http.createServer((req, res) => {
       res.writeHead(status, { 'content-type': 'application/json', ...headers });
       res.end(payload === undefined ? '' : JSON.stringify(payload));
     };
+
+    // Lambda compatibility mode uses the edge protocol directly. Reads must use
+    // the uncached port; the cached port intentionally refuses GETs.
+    if (url.pathname.startsWith('/site-brightriders-test/')) {
+      if (req.headers.authorization !== 'Bearer test-blobs-token') { res.writeHead(401).end(); return; }
+      const key = decodeURIComponent(url.pathname.split('/').slice(3).join('/'));
+      const prior = blobs.get(key);
+      if (method === 'GET') {
+        if (req.socket.localPort !== uncachedMock.address().port) { res.writeHead(418).end(); return; }
+        strongReadCount++;
+        if (rejectReads) { res.writeHead(503).end(); return; }
+        if (!prior) { res.writeHead(404).end(); return; }
+        res.writeHead(200, { etag: prior.etag, 'content-type': 'application/octet-stream' });
+        res.end(prior.data);
+        return;
+      }
+      if (method === 'PUT') {
+        if (rejectWrites || (req.headers['if-match'] && req.headers['if-match'] !== prior?.etag) ||
+            (req.headers['if-none-match'] === '*' && prior)) { res.writeHead(412).end(); return; }
+        const etag = etagOf();
+        blobs.set(key, { data: body, etag });
+        res.writeHead(200, { etag }).end();
+        return;
+      }
+      res.writeHead(405).end();
+      return;
+    }
 
     // Signed-URL data plane
     if (url.pathname.startsWith('/signed/')) {
@@ -114,10 +142,20 @@ const mock = http.createServer((req, res) => {
 
     send(405, { error: 'method not allowed' });
   });
-});
+};
+const mock = http.createServer(handleMock);
+const uncachedMock = http.createServer(handleMock);
 
 await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+await new Promise((r) => uncachedMock.listen(0, '127.0.0.1', r));
 const blobsApiUrl = `http://127.0.0.1:${mock.address().port}`;
+
+const lambdaBlobs = Buffer.from(JSON.stringify({
+  url: blobsApiUrl,
+  url_uncached: `http://127.0.0.1:${uncachedMock.address().port}`,
+  primary_region: 'dev',
+  token: 'test-blobs-token',
+})).toString('base64');
 
 const context = Buffer.from(
   JSON.stringify({
@@ -147,7 +185,8 @@ const lambdaScript = `
         httpMethod: method,
         path: '/.netlify/functions/api' + publicPath.replace(/^\\/api/, ''),
         rawUrl: 'https://brightriders.netlify.app' + publicPath,
-        headers: { 'content-type': 'application/json', ...headers },
+        headers: { 'content-type': 'application/json', ...(process.env.EVENT_BLOBS ? { 'X-Nf-Site-Id': 'site-brightriders-test', 'x-nf-deploy-id': 'deploy-test' } : {}), ...headers },
+        ...(process.env.EVENT_BLOBS ? { blobs: process.env.EVENT_BLOBS } : {}),
         body: body ? JSON.stringify(body) : null,
         isBase64Encoded: false,
       },
@@ -155,12 +194,20 @@ const lambdaScript = `
     );
 
   const PHASE = process.env.PHASE;
+  const demo = PHASE === 'smoke' || PHASE === 'smoke-again';
   const login = await call('POST', '/api/auth/login', {
-    username: PHASE === 'verify' ? 'ruthvikabrs123' : 'ARHATSHAH8149',
-    password: PHASE === 'verify' ? process.env.ADMIN_TWO_PW : process.env.ADMIN_ONE_PW,
-    expectedRole: 'admin',
+    username: demo ? '12345' : PHASE === 'verify' ? 'ruthvikabrs123' : 'ARHATSHAH8149',
+    password: demo ? 'abcd' : PHASE === 'verify' ? process.env.ADMIN_TWO_PW : process.env.ADMIN_ONE_PW,
+    expectedRole: demo ? 'student' : 'admin',
   });
-  if (PHASE === 'conflict' || PHASE === 'outage') {
+  if (demo) {
+    if (login.statusCode !== 200 || JSON.parse(login.body).user.role !== 'student') throw new Error('DEMO_LOGIN_FAILED ' + login.statusCode);
+    const menu = await call('GET', '/api/menu', null, { authorization: 'Bearer ' + JSON.parse(login.body).sessionToken });
+    if (menu.statusCode !== 200 || JSON.parse(menu.body).items.length !== 28) throw new Error('DEMO_MENU_FAILED ' + menu.statusCode);
+    console.log(JSON.stringify({ status: login.statusCode }));
+    return;
+  }
+  if (PHASE === 'conflict' || PHASE === 'outage' || PHASE === 'missing-uncached') {
     console.log(JSON.stringify({ status: login.statusCode }));
     return;
   }
@@ -218,7 +265,12 @@ const runPhase = (phase) =>
         ...process.env,
         PHASE: phase,
         NETLIFY: 'true',
-        NETLIFY_BLOBS_CONTEXT: context,
+        NETLIFY_BLOBS_CONTEXT: lambdaEventMode ? '' : context,
+        EVENT_BLOBS: lambdaEventMode ? (phase === 'missing-uncached'
+          ? Buffer.from(JSON.stringify({ url: blobsApiUrl, token: 'test-blobs-token' })).toString('base64')
+          : lambdaBlobs) : '',
+        BRS_ALLOW_EPHEMERAL_TEST_DB: '',
+        NODE_ENV: 'test',
         DATABASE_PATH: `/tmp/blobs-probe-${phase}.sqlite`,
         ADMIN_ONE_PW: (process.env.BRS_ADMIN_ONE_PASSWORD || '').trim(),
         ADMIN_TWO_PW: (process.env.BRS_ADMIN_TWO_PASSWORD || '').trim(),
@@ -257,14 +309,27 @@ const assert = (cond, msg) => {
   if (!cond) throw new Error(msg);
 };
 
+console.log(`\n=== Netlify Blobs snapshot round-trip (${lambdaEventMode ? 'Lambda event' : 'environment context'}) ===\n`);
+const smoke = await runPhase('smoke');
+const smokeAgain = await runPhase('smoke-again');
+check('Demo student signs in and sees the menu in two separate cold starts', () => {
+  assert(smoke.status === 200 && smokeAgain.status === 200, 'demo sign-in failed');
+  if (lambdaEventMode) assert(strongReadCount > 0, 'uncached endpoint was not used');
+});
+
+if (lambdaEventMode) {
+  const missing = await runPhase('missing-uncached');
+  check('Missing uncached endpoint fails closed instead of using stale or isolated data', () => {
+    assert(missing.status === 503, `expected 503, got ${missing.status}`);
+  });
+}
 const adminPw = (process.env.BRS_ADMIN_ONE_PASSWORD || '').trim();
 if (!adminPw || !process.env.BRS_ADMIN_TWO_PASSWORD) {
   console.log('\n  - SKIPPED Netlify Blobs snapshot round-trip: set both admin password environment variables to run it.\n');
   mock.close();
-  process.exit(0);
+  uncachedMock.close();
+  process.exit(failures ? 1 : 0);
 }
-
-console.log('\n=== Netlify Blobs snapshot round-trip (two cold starts) ===\n');
 
 const cold1 = await runPhase('seed');
 check('Cold start #1 signs in and creates a Chef account', () => {
@@ -276,6 +341,10 @@ check('Cold start #1 wrote the SQLite snapshot to Netlify Blobs', () => {
   const snapshot = [...blobs.values()][0];
   assert(snapshot.data.byteLength > 4096, `snapshot too small: ${snapshot.data.byteLength} bytes`);
   assert(snapshot.data.subarray(0, 15).toString('utf8') === 'SQLite format 3', 'not a SQLite file');
+});
+
+if (lambdaEventMode) check('Lambda event supplies a working uncached strong-read endpoint', () => {
+  assert(strongReadCount > 0, 'no strong reads reached the uncached endpoint');
 });
 
 const cold2 = await runPhase('verify');
@@ -309,6 +378,7 @@ check('Storage outage does not silently create isolated data', () => {
 });
 
 mock.close();
+uncachedMock.close();
 if (failures > 0) {
   console.error(`\n✗ ${failures} Blobs persistence check(s) failed.\n`);
   process.exit(1);

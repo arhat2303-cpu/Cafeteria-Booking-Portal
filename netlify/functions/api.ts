@@ -11,9 +11,33 @@ const BLOB_STORE_NAME = 'bright-riders-smartcanteen';
 // Versioned key: the earlier deployment wrote a 5-role (pre-Student/Parent/Chef/Admin) snapshot.
 const BLOB_DB_KEY = 'canteen-v2-4roles.sqlite';
 
-// Every request reads the shared snapshot. Never silently fall back to isolated /tmp data.
-function resolveBlobStore(): Store | null {
-  try { return getStore({ name: BLOB_STORE_NAME }); } catch { return null; }
+// Lambda compatibility functions receive Blobs credentials on each event, rather than
+// NETLIFY_BLOBS_CONTEXT. connectLambda() only copies the cached edge URL; it currently
+// drops url_uncached, which makes every strong read fail. Construct the store explicitly
+// from the event so both administrators read the uncached shared snapshot.
+function resolveBlobStore(event: any): Store {
+  if (typeof event?.blobs === 'string' && event.blobs) {
+    const data = JSON.parse(Buffer.from(event.blobs, 'base64').toString('utf8'));
+    const headers = Object.fromEntries(
+      Object.entries(event.headers || {}).map(([key, value]) => [key.toLowerCase(), value])
+    );
+    const siteID = headers['x-nf-site-id'];
+    if (typeof siteID !== 'string' || !siteID || typeof data.token !== 'string' || !data.token ||
+        typeof data.url !== 'string' || !data.url || typeof data.url_uncached !== 'string' || !data.url_uncached) {
+      // Some environments also provide a complete modern context. Let the SDK
+      // use it, but do not substitute the cached URL for a missing uncached URL.
+      return getStore({ name: BLOB_STORE_NAME });
+    }
+    return getStore({
+      name: BLOB_STORE_NAME,
+      siteID,
+      token: data.token,
+      edgeURL: data.url,
+      uncachedEdgeURL: data.url_uncached,
+    });
+  }
+  // Modern functions or local tests can supply the standard environment context instead.
+  return getStore({ name: BLOB_STORE_NAME });
 }
 
 class SnapshotConflict extends Error {}
@@ -101,7 +125,14 @@ async function handleRequest(event: any, context: any) {
     if (context && typeof context === 'object') context.callbackWaitsForEmptyEventLoop = false;
     normalizeEventPath(event);
     await ensureSqlEngine();
-    const store = resolveBlobStore();
+    let store: Store | null;
+    try {
+      store = resolveBlobStore(event);
+    } catch (error) {
+      // The opt-in is only for offline bundle simulations, never enabled by default.
+      if (process.env.BRS_ALLOW_EPHEMERAL_TEST_DB !== '1') throw error;
+      store = null;
+    }
     // Explicit test-only opt-in for bundle harnesses with no Netlify Blobs service.
     if (!store && process.env.BRS_ALLOW_EPHEMERAL_TEST_DB !== '1') {
       throw new Error('Shared database storage is unavailable.');

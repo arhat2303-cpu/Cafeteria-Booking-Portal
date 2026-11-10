@@ -109,7 +109,7 @@ runtime that previously returned `502 Bad Gateway` on sign-in.
 # Sign-in / menu / routing checks against the serverless bundle over real HTTP
 npm run verify:serverless
 
-# Two genuine cold starts, with the SQLite snapshot round-tripping through a mock Netlify Blobs API
+# Separate cold starts against mock Blobs API and Lambda event/edge protocols
 npm run verify:blobs
 
 # Drives the real React login page (4 role cards → Admin form → submit) against the bundle
@@ -138,6 +138,8 @@ This repository is pre-configured to deploy out-of-the-box on **Netlify** via [`
 
 ### Shared database and account reset
 
-Netlify Functions use one strongly consistent Blobs snapshot for both administrators. Storage failures and concurrent writes fail visibly instead of reporting a successful change that was not saved. The account reset runs once, preserving the two permanent administrators and creating three demo profiles. If existing non-admin users have order, payment or collection history, the reset and demo seeding are skipped to protect financial records; consult the function logs and handle the history manually. The deployment must have Netlify Blobs configured with strong consistency. The demo password is intentionally insecure; do not use this setup with real student or financial data.
+Netlify Functions use one strongly consistent Blobs snapshot for both administrators. Lambda-compatible functions read the per-request Blobs event, including its uncached endpoint; modern runtime environment context is supported as well. Storage failures and concurrent writes fail visibly instead of reporting a successful change that was not saved. The account reset runs once, preserving the two permanent administrators and creating three demo profiles. If existing non-admin users have order, payment or collection history, the reset and demo seeding are skipped to protect financial records; consult the function logs and handle the history manually. The deployment must have Netlify Blobs configured with strong consistency. The demo password is intentionally insecure; do not use this setup with real student or financial data.
 
 The snapshot-based serverless storage is not a substitute for a transactional database for live payment processing: a conflict or storage failure after an external payment provider call may require reconciliation. Use a transactional database and payment reconciliation before accepting real payments.
+
+If Netlify reports that the shared database is unavailable, inspect the function logs for the underlying Blobs context or storage error. Lambda-compatible events need `blobs.url_uncached` and the site ID header (or a complete modern Blobs environment context); do not fall back to isolated local files or cached reads. A deployed site must be tested separately from these mock-based checks.
