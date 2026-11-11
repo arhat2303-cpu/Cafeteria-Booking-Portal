@@ -30,6 +30,12 @@ const PERMANENT_ADMINS: ReadonlyArray<{
   },
 ];
 
+// Only the original two administrators are permanent; administrators created later
+// (including the one-time Shashi seed) can be managed normally.
+export function isPermanentAdmin(username: string): boolean {
+  return PERMANENT_ADMINS.some((admin) => admin.username.toLowerCase() === username.toLowerCase());
+}
+
 let sqlEngine: SqlJsStatic | null = null;
 let sqlEnginePromise: Promise<SqlJsStatic> | null = null;
 
@@ -390,21 +396,21 @@ export function initializeSchemaAndDefaults(
     if (!database.get("SELECT value FROM platform_settings WHERE key = '_accounts_reset_2026_11'")) {
       const historical = database.get<{ cnt: number }>(
         `SELECT COUNT(*) AS cnt FROM orders WHERE placed_by_user_id IN
-         (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))
+         (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123', 'shashi1234'))
          OR beneficiary_user_id IN
-         (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))`
+         (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123', 'shashi1234'))`
       );
       const otherFinancial = database.get<{ cnt: number }>(
         `SELECT (SELECT COUNT(*) FROM payment_transactions WHERE user_id IN
-          (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))) +
+          (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123', 'shashi1234'))) +
           (SELECT COUNT(*) FROM collection_records WHERE verified_by_chef_id IN
-          (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123'))) AS cnt`
+          (SELECT id FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123', 'shashi1234'))) AS cnt`
       );
       const blocked = Boolean((historical?.cnt || 0) || (otherFinancial?.cnt || 0));
       if (blocked) {
         console.error('Account reset skipped: existing financial history must be handled manually.');
       } else {
-        database.run(`DELETE FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123')`);
+        database.run(`DELETE FROM users WHERE LOWER(username) NOT IN ('arhatshah8149', 'ruthvikabrs123', 'shashi1234')`);
       }
       if (!blocked) {
         const demoHash = '$2a$12$xlI8.BfP/dPpZMAcrTbzsem1jp3VA4iavz.I0OnVw34FbeItmUDIe';
@@ -422,6 +428,29 @@ export function initializeSchemaAndDefaults(
         database.run(`INSERT INTO parent_student_links (parent_user_id, student_user_id) VALUES (?, ?)`, ids.parent, ids.student);
       }
       database.run(`INSERT INTO platform_settings (key, value) VALUES ('_accounts_reset_2026_11', ?)`, blocked ? 'blocked_history' : 'done');
+    }
+
+    // One-time provisioning, not a recurring password reset or re-creation after deletion.
+    if (!database.get("SELECT value FROM platform_settings WHERE key = '_shashi_admin_provisioned_v1'")) {
+      const existing = database.get<{ id: number; role: string }>(
+        'SELECT id, role FROM users WHERE username = ?', 'SHASHI1234'
+      );
+      const hash = '$2a$12$DtovpI/Tuu/Cucsuvxiasu9lBLhIuzOfwFVn6oe4/JF5H96OxzGZC';
+      if (existing && existing.role !== 'admin') {
+        // Never silently promote or overwrite someone else's non-admin account.
+        console.error('Could not provision SHASHI1234: username belongs to a non-admin account.');
+      } else {
+        let userId: number;
+        if (existing) {
+          userId = existing.id;
+          database.run("UPDATE users SET password_hash = ?, is_active = 1, updated_at = datetime('now') WHERE id = ?", hash, userId);
+          database.run("UPDATE user_sessions SET revoked_at = datetime('now') WHERE user_id = ? AND revoked_at IS NULL", userId);
+        } else {
+          userId = database.run("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES (?, ?, ?, 'admin', 1)", 'SHASHI1234', hash, 'Shashi').lastInsertRowid;
+        }
+        database.run("INSERT INTO admin_activity_logs (actor_user_id, action, target_type, target_id, details_json) VALUES (NULL, 'SYSTEM_PROVISION_ADMIN', 'user', ?, ?)", String(userId), JSON.stringify({ username: 'SHASHI1234', role: 'admin' }));
+        database.run("INSERT INTO platform_settings (key, value) VALUES ('_shashi_admin_provisioned_v1', 'done')");
+      }
     }
   });
 }

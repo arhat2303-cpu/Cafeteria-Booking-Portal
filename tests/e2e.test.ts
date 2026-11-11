@@ -90,7 +90,7 @@ async function runTests() {
     const anonClient = new TestClient(baseUrl);
 
     // 1. PERMANENT ADMINS & ZERO DEMO CONTENT VERIFICATION
-    await step('Seeds two permanent admins and one demo account for each non-admin role', async () => {
+    await step('Seeds three admins and one demo account for each non-admin role', async () => {
       // Idempotent repeated initialization must not duplicate accounts
       initializeSchemaAndDefaults(db);
 
@@ -101,8 +101,12 @@ async function runTests() {
         is_active: number;
       }>('SELECT username, role, password_hash, is_active FROM users ORDER BY id ASC');
 
-      assert.equal(allUsers.length, 5, 'Initial DB must contain two admins and three demo users');
-      assert.deepEqual(allUsers.slice(2).map(u => u.role).sort(), ['chef', 'parent', 'student']);
+      assert.equal(allUsers.length, 6, 'Initial DB must contain three admins and three demo users');
+      assert.deepEqual(allUsers.filter(u => u.role !== 'admin').map(u => u.role).sort(), ['chef', 'parent', 'student']);
+      const shashi = allUsers.find(u => u.username === 'SHASHI1234');
+      assert.equal(shashi?.role, 'admin');
+      assert.ok(shashi?.password_hash.startsWith('$2a$12$'));
+      if (process.env.BRS_ADMIN_THREE_PASSWORD) assert.ok(bcrypt.compareSync(process.env.BRS_ADMIN_THREE_PASSWORD, shashi!.password_hash));
       assert.equal(allUsers[0].username, 'ARHATSHAH8149');
       assert.equal(allUsers[0].role, 'admin');
       assert.ok(allUsers[0].password_hash.startsWith('$2a$12$'));
@@ -138,6 +142,29 @@ async function runTests() {
       assert.ok(legacy.get("SELECT id FROM users WHERE username = 'newuser'"));
       assert.ok(legacy.get("SELECT id FROM orders WHERE order_number = 'old-order'"));
       assert.equal(legacy.get<{ value: string }>("SELECT value FROM platform_settings WHERE key = '_accounts_reset_2026_11'")?.value, 'blocked_history');
+      legacy.close();
+    });
+
+    await step('Shashi provisioning is one-time and never promotes a conflicting non-admin', async () => {
+      const legacy = new AppDatabase(':memory:');
+      initializeSchemaAndDefaults(legacy);
+      legacy.run("DELETE FROM users WHERE username = 'SHASHI1234'");
+      initializeSchemaAndDefaults(legacy);
+      assert.equal(legacy.get("SELECT id FROM users WHERE username = 'SHASHI1234'"), undefined);
+      legacy.run("DELETE FROM platform_settings WHERE key = '_shashi_admin_provisioned_v1'");
+      legacy.run("INSERT INTO users (username, password_hash, full_name, role) VALUES ('SHASHI1234', 'other-hash', 'Existing Person', 'parent')");
+      initializeSchemaAndDefaults(legacy);
+      const conflict = legacy.get<{ role: string; password_hash: string }>("SELECT role, password_hash FROM users WHERE username = 'SHASHI1234'");
+      assert.equal(conflict?.role, 'parent');
+      assert.equal(conflict?.password_hash, 'other-hash');
+      legacy.run("DELETE FROM users WHERE username = 'SHASHI1234'");
+      initializeSchemaAndDefaults(legacy);
+      const restored = legacy.get<{ role: string; password_hash: string }>("SELECT role, password_hash FROM users WHERE username = 'SHASHI1234'");
+      assert.equal(restored?.role, 'admin');
+      if (process.env.BRS_ADMIN_THREE_PASSWORD) assert.ok(bcrypt.compareSync(process.env.BRS_ADMIN_THREE_PASSWORD, restored!.password_hash));
+      legacy.run("UPDATE users SET password_hash = 'changed-hash' WHERE username = 'SHASHI1234'");
+      initializeSchemaAndDefaults(legacy);
+      assert.equal(legacy.get<{ password_hash: string }>("SELECT password_hash FROM users WHERE username = 'SHASHI1234'")?.password_hash, 'changed-hash');
       legacy.close();
     });
 
@@ -192,6 +219,34 @@ async function runTests() {
       });
       assert.equal(a.status, 200);
       assert.equal(a.data.user.role, 'admin');
+
+      // Administrators can create additional administrators, who receive admin access.
+      const newAdmin = await adminClient.request('POST', '/api/admin/users', {
+        role: 'admin', fullName: 'Test New Administrator', username: 'e2e.new.admin', password: TEST_ROLE_PW,
+      });
+      assert.equal(newAdmin.status, 201);
+      assert.equal(newAdmin.data.user.role, 'admin');
+      const newAdminClient = new TestClient(baseUrl);
+      const newLogin = await newAdminClient.request('POST', '/api/auth/login', {
+        username: 'e2e.new.admin', password: TEST_ROLE_PW, expectedRole: 'admin',
+      });
+      assert.equal(newLogin.status, 200);
+      assert.equal((await newAdminClient.request('GET', '/api/admin/users')).status, 200);
+      const newId = newAdmin.data.user.id;
+      assert.equal((await adminClient.request('PATCH', `/api/admin/users/${newId}/status`, { isActive: false })).status, 200);
+      assert.equal((await newAdminClient.request('GET', '/api/admin/users')).status, 401);
+      assert.equal((await adminClient.request('DELETE', `/api/admin/users/${newId}`)).status, 200);
+      const permanentId = db.get<{id: number}>("SELECT id FROM users WHERE username = 'ARHATSHAH8149'")!.id;
+      assert.equal((await adminClient.request('PATCH', `/api/admin/users/${permanentId}/status`, { isActive: false })).status, 403);
+      assert.equal((await adminClient.request('DELETE', `/api/admin/users/${permanentId}`)).status, 403);
+      if (process.env.BRS_ADMIN_THREE_PASSWORD) {
+        const thirdAdmin = new TestClient(baseUrl);
+        const shashiLogin = await thirdAdmin.request('POST', '/api/auth/login', {
+          username: 'SHASHI1234', password: process.env.BRS_ADMIN_THREE_PASSWORD, expectedRole: 'admin',
+        });
+        assert.equal(shashiLogin.status, 200);
+        assert.equal((await thirdAdmin.request('GET', '/api/admin/users')).status, 200);
+      }
 
       // Reject removed 'teacher' role
       const badTeacher = await adminClient.request('POST', '/api/admin/users', {
@@ -781,10 +836,11 @@ async function runTests() {
         const menuCnt = persisted.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM menu_items')?.cnt;
         persisted.close();
 
-        assert.equal(users.length, 5);
+        assert.equal(users.length, 6);
         assert.equal(users[0].username, 'ARHATSHAH8149');
         assert.equal(users[1].username, 'ruthvikabrs123');
-        assert.equal(users.filter((u) => u.role === 'admin').length, 2);
+        assert.equal(users.filter((u) => u.role === 'admin').length, 3);
+        assert.ok(users.some((u) => u.username === 'SHASHI1234' && u.role === 'admin'));
         assert.equal(Number(menuCnt), 28);
       } finally {
         for (const s of ['', '-wal', '-shm']) {

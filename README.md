@@ -46,7 +46,7 @@ A complete, production-ready, full-stack cashless school food ordering, digital 
 
 ## 3. Security, Permanent Admin Bootstrap & Zero Demo Content
 
-- **Demo accounts and clean initialization**: Fresh initialization creates two permanent administrators and one demo account for each of Student, Parent and Chef. Select the matching portal and use username `12345`, password `abcd`. Demo accounts are intentionally weak and must not be used for real users or sensitive data. No demo orders or payments are created.
+- **Demo accounts and clean initialization**: Fresh initialization creates the two permanent administrators, the requested Shashi administrator, and one demo account for each of Student, Parent and Chef. Select the matching portal and use username `12345`, password `abcd`. Demo accounts are intentionally weak and must not be used for real users or sensitive data. No demo orders or payments are created.
 - **Zero Plaintext Secrets**: No passwords, API keys, or secrets exist in frontend code or committed repository files, and no administrator credentials are ever displayed on the website.
 - **Role-Portal Sign-In Validation & Session Revocation**: `POST /api/auth/login` validates both credentials and the selected role portal (`expectedRole`). Sessions use `HttpOnly`, `SameSite=Lax` cookies backed by `user_sessions`, revoking active sessions immediately upon password reset or account deactivation.
 - **Cryptographic Zero-PII QR Codes**: Every paid order receives a unique `BRSQR.v1.<128-bit-uid>.<hmac-sha256>` token verified with `crypto.timingSafeEqual` and locked inside an atomic SQLite `BEGIN IMMEDIATE` transaction upon collection.
@@ -88,7 +88,7 @@ All **28 items** across **4 categories** from the official printed **Bright Ride
 # 1. Install dependencies (Node.js 18+ — no native modules, no experimental flags)
 npm install
 
-# 2. Initialize the SQLite database (2 permanent Admins + 28 official SEHHI menu items)
+# 2. Initialize the SQLite database (2 permanent Admins, the Shashi Admin, demo profiles + 28 official SEHHI menu items)
 npm run db:init
 
 # 3. Run the full 12-suite End-to-End Integration Test Suite
@@ -134,12 +134,14 @@ This repository is pre-configured to deploy out-of-the-box on **Netlify** via [`
    - `JWT_SECRET` — strong random 64-character secret
    - `QR_HMAC_SECRET` — strong random 64-character secret
    - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
-4. Click **Deploy site** — all 4 role portals, the 2 permanent Administrator accounts, and the 28-item Bright Riders SEHHI menu persist automatically via `@netlify/blobs`.
+4. Click **Deploy site** — all 4 role portals, the administrator accounts, and the 28-item Bright Riders SEHHI menu persist automatically via `@netlify/blobs`.
 
 ### Shared database and account reset
 
-Netlify Functions use one strongly consistent Blobs snapshot for both administrators. Lambda-compatible functions read the per-request Blobs event, including its uncached endpoint; modern runtime environment context is supported as well. Storage failures and concurrent writes fail visibly instead of reporting a successful change that was not saved. The account reset runs once, preserving the two permanent administrators and creating three demo profiles. If existing non-admin users have order, payment or collection history, the reset and demo seeding are skipped to protect financial records; consult the function logs and handle the history manually. The deployment must have Netlify Blobs configured with strong consistency. The demo password is intentionally insecure; do not use this setup with real student or financial data.
+Netlify Functions use one strongly consistent Blobs snapshot for all administrators. Lambda-compatible functions read the per-request Blobs event, including its uncached endpoint; modern runtime environment context is supported as well. Storage failures and concurrent writes fail visibly instead of reporting a successful change that was not saved. The account reset runs once, preserving the two permanent administrators and creating three demo profiles. If existing non-admin users have order, payment or collection history, the reset and demo seeding are skipped to protect financial records; consult the function logs and handle the history manually. The deployment must have Netlify Blobs configured with strong consistency. The demo password is intentionally insecure; do not use this setup with real student or financial data.
 
 The snapshot-based serverless storage is not a substitute for a transactional database for live payment processing: a conflict or storage failure after an external payment provider call may require reconciliation. Use a transactional database and payment reconciliation before accepting real payments.
 
 If Netlify reports that the shared database is unavailable, inspect the function logs for the underlying Blobs context or storage error. Lambda-compatible events need `blobs.url_uncached` and the site ID header (or a complete modern Blobs environment context); do not fall back to isolated local files or cached reads. A deployed site must be tested separately from these mock-based checks.
+
+Administrators can create additional administrators from **Users → Create New School Account → Administrator**. The original two permanent administrators cannot be deleted, renamed or deactivated; other administrators are manageable normally. The requested `SHASHI1234` account is provisioned once on initialization. If a non-admin already owns that username, it is not overwritten or promoted; check the function logs and resolve the conflict manually.

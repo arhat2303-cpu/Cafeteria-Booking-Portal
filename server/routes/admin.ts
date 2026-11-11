@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { getDb } from '../db/connection.js';
+import { getDb, isPermanentAdmin } from '../db/connection.js';
 import { authenticate, requireRole, type UserRole } from '../middleware/auth.js';
 import { aedToFils, filsToAed, formatAed } from '../services/money.js';
 import { logAdminActivity } from '../services/audit.js';
@@ -319,7 +319,7 @@ adminRouter.get('/users', (req, res) => {
   res.json({ users });
 });
 
-// Create User Account (All 5 Roles)
+// Create User Account (All 4 Roles)
 adminRouter.post('/users', async (req, res) => {
   try {
     const {
@@ -358,10 +358,6 @@ adminRouter.post('/users', async (req, res) => {
       return;
     }
 
-    if (role === 'admin') {
-      res.status(403).json({ error: 'Only the two permanent administrator accounts are allowed.' });
-      return;
-    }
     if (/^12345(?:\.(?:student|parent|chef))?$/i.test(String(username).trim())) {
       res.status(409).json({ error: 'This username is reserved for demo accounts.' });
       return;
@@ -518,7 +514,7 @@ adminRouter.put('/users/:id', (req, res) => {
       shift,
     } = req.body || {};
 
-    if (existing.role === 'admin' && (isActive === false || (username && String(username).trim().toLowerCase() !== existing.username.toLowerCase()))) {
+    if (existing.role === 'admin' && isPermanentAdmin(existing.username) && (isActive === false || (username && String(username).trim().toLowerCase() !== existing.username.toLowerCase()))) {
       res.status(403).json({ error: 'Permanent administrators cannot be deactivated or renamed.' });
       return;
     }
@@ -629,6 +625,11 @@ adminRouter.patch('/users/:id/status', (req, res) => {
   }
 
   const db = getDb();
+  const target = db.get<{ username: string; role: string }>('SELECT username, role FROM users WHERE id = ?', targetId);
+  if (target?.role === 'admin' && isPermanentAdmin(target.username) && !isActive) {
+    res.status(403).json({ error: 'Permanent administrator accounts cannot be deactivated.' });
+    return;
+  }
   const upd = db.run(
     `UPDATE users SET is_active = ?, updated_at = datetime('now') WHERE id = ?`,
     Boolean(isActive),
@@ -717,7 +718,7 @@ adminRouter.delete('/users/:id', (req, res) => {
       return;
     }
 
-    if (target.role === 'admin') {
+    if (target.role === 'admin' && isPermanentAdmin(target.username)) {
       res.status(403).json({ error: 'Permanent administrator accounts cannot be deleted.' });
       return;
     }

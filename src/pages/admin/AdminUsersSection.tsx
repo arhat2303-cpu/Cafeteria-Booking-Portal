@@ -496,6 +496,9 @@ export const AdminUsersSection: React.FC = () => {
                     <option value="chef">Chef / Kitchen Staff</option>
                     <option value="admin">Administrator</option>
                   </select>
+                  {formRole === 'admin' && (
+                    <p className="mt-1 text-xs text-amber-700">Administrators can manage users, orders, payments and settings. Grant access only to trusted staff.</p>
+                  )}
                 </div>
               )}
 

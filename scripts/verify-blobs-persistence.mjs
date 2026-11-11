@@ -196,8 +196,8 @@ const lambdaScript = `
   const PHASE = process.env.PHASE;
   const demo = PHASE === 'smoke' || PHASE === 'smoke-again';
   const login = await call('POST', '/api/auth/login', {
-    username: demo ? '12345' : PHASE === 'verify' ? 'ruthvikabrs123' : 'ARHATSHAH8149',
-    password: demo ? 'abcd' : PHASE === 'verify' ? process.env.ADMIN_TWO_PW : process.env.ADMIN_ONE_PW,
+    username: demo ? '12345' : PHASE === 'verify' ? 'ruthvikabrs123' : PHASE === 'shashi' ? 'SHASHI1234' : 'ARHATSHAH8149',
+    password: demo ? 'abcd' : PHASE === 'verify' ? process.env.ADMIN_TWO_PW : PHASE === 'shashi' ? process.env.ADMIN_THREE_PW : process.env.ADMIN_ONE_PW,
     expectedRole: demo ? 'student' : 'admin',
   });
   if (demo) {
@@ -240,6 +240,12 @@ const lambdaScript = `
     }, auth);
     if (created.statusCode !== 201) throw new Error('SECOND_CREATE_FAILED ' + created.body);
   }
+  if (PHASE === 'shashi') {
+    const created = await call('POST', '/api/admin/users', {
+      role: 'admin', fullName: 'Additional Admin Probe', username: 'probe.admin', password: 'Probe-Admin#2026!',
+    }, auth);
+    if (created.statusCode !== 201) throw new Error('CREATE_ADMIN_FAILED ' + created.body);
+  }
   const users = await call('GET', '/api/admin/users', null, auth);
   if (users.statusCode !== 200) throw new Error('USERS_FAILED ' + users.statusCode + ' ' + users.body);
   const list = JSON.parse(users.body).users || [];
@@ -274,6 +280,7 @@ const runPhase = (phase) =>
         DATABASE_PATH: `/tmp/blobs-probe-${phase}.sqlite`,
         ADMIN_ONE_PW: (process.env.BRS_ADMIN_ONE_PASSWORD || '').trim(),
         ADMIN_TWO_PW: (process.env.BRS_ADMIN_TWO_PASSWORD || '').trim(),
+        ADMIN_THREE_PW: (process.env.BRS_ADMIN_THREE_PASSWORD || '').trim(),
         NODE_OPTIONS: '--no-warnings',
       },
     });
@@ -360,6 +367,19 @@ check('Arhat sees Ruthvika’s user in a third cold start', () => {
   assert(cold3.usernames.includes('probe.chef'), 'first user missing');
   assert(cold3.usernames.includes('probe.second'), 'second admin’s user missing');
 });
+
+if (process.env.BRS_ADMIN_THREE_PASSWORD) {
+  const third = await runPhase('shashi');
+  check('Shashi signs in and creates an administrator', () => {
+    assert(third.usernames.includes('probe.admin'), 'new admin missing');
+  });
+  const other = await runPhase('verify-back-again');
+  check('Another admin sees the new administrator on a later cold start', () => {
+    assert(other.usernames.includes('probe.admin'), 'new admin was not persisted');
+  });
+} else {
+  console.log('  - SKIPPED Shashi sign-in: set BRS_ADMIN_THREE_PASSWORD to run it.');
+}
 
 const original = [...blobs.values()][0].data;
 rejectWrites = true;
