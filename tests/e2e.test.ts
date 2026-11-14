@@ -319,6 +319,34 @@ async function runTests() {
       assert.equal(cLogin.status, 200);
     });
 
+    await step('Payment mode is admin controlled and real transactions cannot be simulated or falsely refunded', async () => {
+      assert.equal((await new TestClient(baseUrl).request('PUT', '/api/admin/payment-mode', { mode: 'test' })).status, 401);
+      assert.equal((await parentClient.request('PUT', '/api/admin/payment-mode', { mode: 'test' })).status, 403);
+      assert.equal((await adminClient.request('PUT', '/api/admin/payment-mode', { mode: 'live' })).status, 409);
+      const mode = await adminClient.request('PUT', '/api/admin/payment-mode', { mode: 'test' });
+      assert.equal(mode.status, 200);
+      assert.equal(mode.data.mode, 'test');
+      assert.equal((await adminClient.request('GET', '/api/admin/payment-mode')).data.liveAvailable, false);
+      const parentId = db.get<{ id: number }>("SELECT id FROM users WHERE username = 'e2e.parent'")!.id;
+      const orderId = db.run(`INSERT INTO orders (order_number, placed_by_user_id, beneficiary_user_id, order_date, collection_slot, subtotal_fils, total_fils)
+        VALUES ('BRS-STRIPE-LEGACY-TEST', ?, ?, '2026-11-08', 'test', 100, 100)`, parentId, activeStudentId).lastInsertRowid;
+      const txnId = db.run(`INSERT INTO payment_transactions (transaction_ref, order_id, user_id, provider, provider_session_id, amount_fils, currency, status)
+        VALUES ('legacy-stripe-test', ?, ?, 'stripe', 'cs_test_legacy', 100, 'AED', 'pending')`, orderId, parentId).lastInsertRowid;
+      assert.equal((await parentClient.request('POST', `/api/payments/${txnId}/resolve-pending`, { resolution: 'succeeded' })).status, 409);
+      assert.equal((await parentClient.request('POST', '/api/payments/checkout', { orderId, sandboxOutcome: 'succeeded' })).status, 409);
+      assert.equal((await parentClient.request('POST', `/api/orders/${orderId}/cancel`, {})).status, 400);
+      assert.equal((await parentClient.request('GET', '/api/payments/stripe/verify-session?session_id=cs_test_legacy')).status, 503);
+      db.run("UPDATE payment_transactions SET status = 'succeeded' WHERE id = ?", txnId);
+      assert.equal((await adminClient.request('POST', `/api/payments/${txnId}/refund`, { reason: 'test' })).status, 409);
+      assert.equal(db.get<{status: string}>('SELECT status FROM payment_transactions WHERE id = ?', txnId)?.status, 'succeeded');
+      db.run('DELETE FROM payment_transactions WHERE id = ?', txnId);
+      db.run("UPDATE platform_settings SET value = 'live' WHERE key = 'payment_mode'");
+      assert.equal((await parentClient.request('POST', '/api/payments/checkout', { orderId })).status, 503);
+      db.run('DELETE FROM orders WHERE id = ?', orderId);
+      assert.equal((await adminClient.request('GET', '/api/admin/payment-mode')).data.mode, 'unavailable');
+      assert.equal((await adminClient.request('PUT', '/api/admin/payment-mode', { mode: 'test' })).status, 200);
+    });
+
     await step('Enforces strict backend role restrictions across protected routes', async () => {
       assert.equal((await studentClient.request('GET', '/api/admin/overview')).status, 403);
       assert.equal((await studentClient.request('GET', '/api/payments')).status, 403);

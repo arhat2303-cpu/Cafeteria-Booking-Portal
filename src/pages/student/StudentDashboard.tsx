@@ -83,6 +83,9 @@ export const StudentDashboard: React.FC = () => {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+        <div role="status" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-950">
+          TEST MODE — simulated and Stripe test payments and QR passes are for demonstration only; no money has been collected.
+        </div>
         {/* Student Campus Dining ID Card */}
         <div className="bg-gradient-to-br from-brs-navy via-brs-royal to-emerald-950 rounded-3xl p-6 text-white shadow-soft">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

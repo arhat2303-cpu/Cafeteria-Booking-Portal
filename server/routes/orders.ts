@@ -677,6 +677,10 @@ ordersRouter.post('/:id/cancel', authenticate, requireRole(['parent', 'admin']),
         }
       }
 
+      if (db.get("SELECT id FROM payment_transactions WHERE order_id = ? AND provider = 'stripe'", orderId)) {
+        throw new Error('This order has a real payment or an open Stripe checkout. Contact an administrator to reconcile it with the provider before cancelling.');
+      }
+
       const cancelNote = reason
         ? String(reason).trim()
         : `Cancelled by ${user.role} (${user.fullName})`;

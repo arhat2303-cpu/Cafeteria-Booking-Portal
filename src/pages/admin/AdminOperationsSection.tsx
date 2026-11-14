@@ -318,6 +318,38 @@ export const AdminPaymentsSection: React.FC = () => {
   const [txns, setTxns] = useState<PaymentTransactionRecord[]>([]);
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
+  const [mode, setMode] = useState<{ mode: 'test' | 'stripe_test' | 'unavailable'; stripeTestAvailable: boolean; liveAvailable: boolean; liveBlockedReason: string } | null>(null);
+  const [changingMode, setChangingMode] = useState(false);
+  const loadMode = useCallback(async () => {
+    try {
+      setMode(await apiFetch('/api/admin/payment-mode'));
+    } catch (err: any) {
+      showToast('Could not load payment mode', 'error', err.message);
+    }
+  }, [showToast]);
+  const launchTestMode = async () => {
+    if (!window.confirm('Launch test mode for the whole canteen? Payments will be simulated; no money will be charged.')) return;
+    setChangingMode(true);
+    try {
+      setMode(await apiFetch('/api/admin/payment-mode', { method: 'PUT', body: JSON.stringify({ mode: 'test' }) }));
+      showToast('Test mode active', 'info', 'Payments are simulated and no money is collected.');
+    } catch (err: any) {
+      showToast('Unable to switch mode', 'error', err.message);
+    } finally {
+      setChangingMode(false);
+    }
+  };
+
+  const launchStripeTest = async () => {
+    if (!window.confirm('Switch the canteen to Stripe TEST checkout? No real charges will be made.')) return;
+    setChangingMode(true);
+    try {
+      setMode(await apiFetch('/api/admin/payment-mode', { method: 'PUT', body: JSON.stringify({ mode: 'stripe_test' }) }));
+      showToast('Stripe test checkout active', 'info', 'Only Stripe test cards can be used; no real money is collected.');
+    } catch (err: any) {
+      showToast('Unable to start Stripe testing', 'error', err.message);
+    } finally { setChangingMode(false); }
+  };
 
   const loadPayments = useCallback(async () => {
     const params = new URLSearchParams();
@@ -331,7 +363,8 @@ export const AdminPaymentsSection: React.FC = () => {
 
   useEffect(() => {
     loadPayments();
-  }, [loadPayments]);
+    loadMode();
+  }, [loadPayments, loadMode]);
 
   const handleRefund = async (t: PaymentTransactionRecord) => {
     const reason = window.prompt(
@@ -353,6 +386,23 @@ export const AdminPaymentsSection: React.FC = () => {
 
   return (
     <div className="space-y-5">
+      <section className="rounded-3xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide">Payment mode: {mode ? (mode.mode === 'test' ? 'SIMULATED TEST' : mode.mode === 'stripe_test' ? 'STRIPE TEST' : 'UNAVAILABLE') : 'Checking…'}</p>
+            <p className="mt-1 text-sm">Both test modes collect no money. Stripe test uses hosted checkout and test cards; the simulated mode does not contact a payment provider.</p>
+            <p className="mt-2 text-xs">{mode?.liveBlockedReason || 'Live payment availability is being checked.'}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={launchTestMode} disabled={!mode || changingMode} className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700 disabled:opacity-50">
+              {changingMode ? 'Switching…' : 'Launch test mode'}
+            </button>
+            <button type="button" onClick={launchStripeTest} disabled={!mode?.stripeTestAvailable || changingMode} className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-bold text-white hover:bg-sky-800 disabled:opacity-50" title={mode?.stripeTestAvailable ? 'Use Stripe test checkout' : 'Configure a Stripe test key, test webhook and public URL first'}>
+              Try Stripe test checkout
+            </button>
+          </div>
+        </div>
+      </section>
       <div className="bg-white rounded-3xl border border-slate-200 p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {(['all', 'succeeded', 'pending', 'failed', 'refunded'] as const).map((st) => (

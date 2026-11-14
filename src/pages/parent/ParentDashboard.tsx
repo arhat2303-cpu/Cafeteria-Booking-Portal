@@ -145,6 +145,8 @@ export const ParentDashboard: React.FC = () => {
   useRealtimeUpdates((evt) => {
     if (evt.startsWith('order.') || evt.startsWith('payment.')) {
       loadOrdersAndPayments();
+    } else if (evt === 'settings.updated') {
+      refreshSession();
     } else if (evt === 'menu.updated') {
       loadMenu(selectedDate);
       loadCart();
@@ -230,13 +232,14 @@ export const ParentDashboard: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({
           orderId: ordRes.order.id,
+          expectedMode: settings?.paymentMode,
           paymentMethodType: paymentMethod,
           sandboxOutcome,
           idempotencyKey: payIdempotency,
         }),
       });
 
-      if (payRes.mode === 'stripe' && payRes.checkoutUrl) {
+      if (payRes.mode === 'stripe_test' && payRes.checkoutUrl) {
         window.location.href = payRes.checkoutUrl;
         return;
       }
@@ -277,12 +280,13 @@ export const ParentDashboard: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({
           orderId,
+          expectedMode: settings?.paymentMode,
           paymentMethodType: 'visa_sandbox',
           sandboxOutcome: 'succeeded',
           idempotencyKey: `retry-${orderId}-${Date.now()}`,
         }),
       });
-      if (payRes.mode === 'stripe' && payRes.checkoutUrl) {
+      if (payRes.mode === 'stripe_test' && payRes.checkoutUrl) {
         window.location.href = payRes.checkoutUrl;
         return;
       }
@@ -992,12 +996,13 @@ export const ParentDashboard: React.FC = () => {
                     </div>
 
                     {/* Payment Provider Section */}
-                    {settings?.paymentMode === 'stripe' ? (
+                    {settings?.paymentMode === 'unavailable' ? (
+                      <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 text-xs text-rose-900">Payments are currently unavailable. Please contact the canteen administrator.</div>
+                    ) : settings?.paymentMode === 'stripe_test' ? (
                       <div className="bg-sky-50 border border-sky-200 rounded-2xl p-3.5 text-xs text-sky-950">
-                        <p className="font-bold">Stripe Secure UAE Checkout (AED)</p>
+                        <p className="font-bold">Stripe TEST checkout (AED) — no real charge</p>
                         <p className="mt-0.5">
-                          You will be redirected to Stripe's PCI-compliant checkout page to complete
-                          your payment in UAE Dirhams.
+                          You will be redirected to Stripe's test checkout. Use test cards only. Apple Pay may appear on eligible devices; no money is collected.
                         </p>
                       </div>
                     ) : (
@@ -1010,8 +1015,7 @@ export const ParentDashboard: React.FC = () => {
                             </p>
                             <p className="mt-0.5 text-amber-900/90">
                               Clearly labelled test payment gateway. No real bank charge occurs and
-                              no card numbers or CVVs are stored. Ready for live Stripe AED keys via{' '}
-                              <code className="font-mono">.env</code>.
+                              no card numbers or CVVs are stored. Real payments are not currently available.
                             </p>
                           </div>
                         </div>
@@ -1056,7 +1060,7 @@ export const ParentDashboard: React.FC = () => {
 
                     <button
                       type="button"
-                      disabled={processingCheckout || !selectedChild}
+                      disabled={processingCheckout || !selectedChild || settings?.paymentMode === 'unavailable'}
                       onClick={handlePlaceOrderAndPay}
                       className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-sm shadow-md transition flex items-center justify-center gap-2"
                     >
@@ -1072,7 +1076,13 @@ export const ParentDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: ACTIVE & PAST ORDERS */}
+        {new URLSearchParams(window.location.search).has('stripe_session_id') && (
+        <div role="status" className="fixed bottom-4 left-4 z-40 max-w-sm rounded-xl border border-sky-300 bg-sky-50 p-3 text-xs text-sky-950 shadow-lg">
+          Stripe test checkout returned. Check your order status; it is confirmed only after a signed test webhook. No real money was charged.
+        </div>
+      )}
+
+      {/* TAB 3: ACTIVE & PAST ORDERS */}
         {activeTab === 'orders' && (
           <div className="space-y-4 max-w-5xl mx-auto">
             <div className="flex items-center justify-between">
@@ -1252,7 +1262,7 @@ export const ParentDashboard: React.FC = () => {
                             {new Date(t.createdAt).toLocaleString()}
                           </td>
                           <td className="px-4 py-3.5">
-                            {t.status === 'pending' && (
+                            {t.status === 'pending' && t.provider === 'brs_sandbox_aed' && (
                               <div className="flex gap-1.5">
                                 <button
                                   onClick={() => handleResolvePendingTxn(t.id, 'succeeded')}

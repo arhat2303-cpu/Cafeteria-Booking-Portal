@@ -1,7 +1,5 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
-import Stripe from 'stripe';
-import { config } from '../config.js';
 import { getDb } from '../db/connection.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { filsToAed, formatAed } from '../services/money.js';
@@ -9,6 +7,10 @@ import { generateQrDataUrl, issueOrderQrToken } from '../services/qr.js';
 import { logAdminActivity, recordOrderStatusChange } from '../services/audit.js';
 import { eventHub } from '../services/events.js';
 import { formatOrderRecord } from './orders.js';
+import { getPaymentMode, stripeTestReady, LIVE_PAYMENTS_BLOCKED_REASON } from '../services/payment-mode.js';
+import { getStripeTestClient, settleStripeTestSession } from '../services/stripe-test.js';
+import { config } from '../config.js';
+import type Stripe from 'stripe';
 
 export const paymentsRouter = Router();
 
@@ -16,11 +18,6 @@ function generateTransactionRef(): string {
   const ts = Date.now().toString(36).toUpperCase();
   const rnd = crypto.randomBytes(4).toString('hex').toUpperCase();
   return `TXN-BRS-${ts}-${rnd}`;
-}
-
-function getStripeClient(): Stripe | null {
-  if (!config.isStripeConfigured) return null;
-  return new Stripe(config.stripeSecretKey);
 }
 
 const SANDBOX_METHOD_LABELS: Record<string, string> = {
@@ -38,6 +35,7 @@ paymentsRouter.post('/checkout', authenticate, requireRole(['parent']), async (r
       sandboxOutcome = 'succeeded',
       paymentMethodType = 'visa_sandbox',
       idempotencyKey,
+      expectedMode,
     } = req.body || {};
 
     // Reject if caller accidentally sends raw card numbers or CVV fields
@@ -89,12 +87,79 @@ paymentsRouter.post('/checkout', authenticate, requireRole(['parent']), async (r
       return;
     }
 
+    const mode = getPaymentMode(db);
+    const selectedMode = expectedMode === 'brs_sandbox_aed' ? 'test' : expectedMode;
+    if ((expectedMode && selectedMode !== mode) || (mode === 'stripe_test' && !expectedMode)) {
+      res.status(409).json({ error: 'Payment mode changed. Refresh the page and review payment details before trying again.' });
+      return;
+    }
+    if (mode === 'stripe_test') {
+      // The order was committed by the separate /orders request. Stripe idempotency
+      // uses that immutable order reference, never a client-provided key.
+      if (order.total_fils < 200 || order.currency.toUpperCase() !== 'AED') {
+        res.status(400).json({ error: 'Stripe UAE checkout requires at least AED 2.00.' });
+        return;
+      }
+      if (db.get("SELECT id FROM payment_transactions WHERE order_id = ? AND provider = 'brs_sandbox_aed' AND status = 'pending'", order.id)) {
+        res.status(409).json({ error: 'Resolve the existing simulated payment before starting Stripe test checkout.' });
+        return;
+      }
+      const reference = `STRIPE-TEST-${order.order_number}`;
+      const existing = db.get<{ provider_session_id: string | null; status: string }>(
+        "SELECT provider_session_id, status FROM payment_transactions WHERE transaction_ref = ? AND provider = 'stripe'", reference
+      );
+      const stripe = getStripeTestClient();
+      let session: Stripe.Checkout.Session;
+      if (existing) {
+        if (existing.status !== 'pending' || !existing.provider_session_id) {
+          res.status(409).json({ error: 'The previous Stripe test checkout requires reconciliation.' });
+          return;
+        }
+        session = await stripe.checkout.sessions.retrieve(existing.provider_session_id);
+      } else {
+        const items = db.all<{ item_name_snapshot: string; unit_price_fils: number; quantity: number }>(
+          'SELECT item_name_snapshot, unit_price_fils, quantity FROM order_items WHERE order_id = ?', order.id
+        );
+        if (!items.length || items.reduce((sum, it) => sum + it.unit_price_fils * it.quantity, 0) !== order.total_fils) {
+          res.status(409).json({ error: 'Order total does not match its items.' });
+          return;
+        }
+        const base = new URL(config.publicAppUrl);
+        const success = new URL('/', base); success.search = `stripe_session_id={CHECKOUT_SESSION_ID}&order_id=${order.id}`;
+        const cancel = new URL('/', base); cancel.search = `payment_cancelled=1&order_id=${order.id}`;
+        session = await stripe.checkout.sessions.create({
+          mode: 'payment', payment_method_types: ['card'], client_reference_id: String(order.id),
+          metadata: { orderId: String(order.id), orderNumber: order.order_number, payerId: String(user.id), transactionRef: reference },
+          line_items: items.map((item) => ({ quantity: item.quantity, price_data: { currency: 'aed', unit_amount: item.unit_price_fils, product_data: { name: item.item_name_snapshot } } })),
+          success_url: success.toString().replace('%7BCHECKOUT_SESSION_ID%7D', '{CHECKOUT_SESSION_ID}'), cancel_url: cancel.toString(),
+        }, { idempotencyKey: `brs-stripe-test-${order.order_number}` });
+      }
+      if (session.livemode !== false || !session.id.startsWith('cs_test_') || session.status !== 'open' || !session.url ||
+          new URL(session.url).protocol !== 'https:' || new URL(session.url).hostname !== 'checkout.stripe.com') {
+        res.status(409).json({ error: 'Stripe test checkout is not open. Contact an administrator to reconcile this order.' });
+        return;
+      }
+      db.run(`INSERT OR IGNORE INTO payment_transactions (transaction_ref, order_id, user_id, provider, provider_session_id, amount_fils, currency, status, payment_method_label)
+        VALUES (?, ?, ?, 'stripe', ?, ?, 'AED', 'pending', 'Stripe TEST checkout — no real charge')`, reference, order.id, user.id, session.id, order.total_fils);
+      res.json({ mode: 'stripe_test', checkoutUrl: session.url, transactionRef: reference });
+      return;
+    }
+    if (mode !== 'test') {
+      res.status(503).json({ error: LIVE_PAYMENTS_BLOCKED_REASON });
+      return;
+    }
+    // Never simulate a payment for an order that may already have a real charge.
+    if (db.get("SELECT id FROM payment_transactions WHERE order_id = ? AND provider = 'stripe'", order.id)) {
+      res.status(409).json({ error: 'This order has a Stripe payment. Contact an administrator to reconcile it; it cannot be paid in test mode.' });
+      return;
+    }
+
     if (idempotencyKey && typeof idempotencyKey === 'string') {
       const existingTxn = db.get<{
         id: number;
         transaction_ref: string;
         status: string;
-      }>('SELECT id, transaction_ref, status FROM payment_transactions WHERE idempotency_key = ?', idempotencyKey.trim());
+      }>("SELECT id, transaction_ref, status FROM payment_transactions WHERE idempotency_key = ? AND order_id = ? AND user_id = ? AND provider = 'brs_sandbox_aed'", idempotencyKey.trim(), order.id, user.id);
       if (existingTxn) {
         res.status(200).json({
           deduplicated: true,
@@ -104,65 +169,6 @@ paymentsRouter.post('/checkout', authenticate, requireRole(['parent']), async (r
         });
         return;
       }
-    }
-
-    // Branch 1: Real Stripe AED Checkout Session when STRIPE_SECRET_KEY is configured
-    const stripe = getStripeClient();
-    if (stripe) {
-      const orderItems = db.all<{
-        item_name_snapshot: string;
-        unit_price_fils: number;
-        quantity: number;
-      }>('SELECT item_name_snapshot, unit_price_fils, quantity FROM order_items WHERE order_id = ?', order.id);
-
-      const txnRef = generateTransactionRef();
-      const baseOrigin =
-        (req.headers.origin && String(req.headers.origin)) || config.publicAppUrl;
-
-      const session = await stripe.checkout.sessions.create({
-        mode: 'payment',
-        payment_method_types: ['card'],
-        currency: 'aed',
-        client_reference_id: String(order.id),
-        metadata: {
-          orderId: String(order.id),
-          orderNumber: order.order_number,
-          transactionRef: txnRef,
-        },
-        line_items: orderItems.map((it) => ({
-          quantity: it.quantity,
-          price_data: {
-            currency: 'aed',
-            unit_amount: it.unit_price_fils,
-            product_data: {
-              name: `${it.item_name_snapshot} (${order.order_number})`,
-            },
-          },
-        })),
-        success_url: `${baseOrigin}/?stripe_session_id={CHECKOUT_SESSION_ID}&order_id=${order.id}`,
-        cancel_url: `${baseOrigin}/?payment_cancelled=1&order_id=${order.id}`,
-      });
-
-      db.run(
-        `INSERT INTO payment_transactions (
-          transaction_ref, order_id, user_id, provider, provider_session_id,
-          amount_fils, currency, status, payment_method_label, idempotency_key
-        ) VALUES (?, ?, ?, 'stripe', ?, ?, 'AED', 'pending', 'Stripe Checkout (AED)', ?)`,
-        txnRef,
-        order.id,
-        user.id,
-        session.id,
-        order.total_fils,
-        idempotencyKey ? String(idempotencyKey).trim() : null
-      );
-
-      res.json({
-        mode: 'stripe',
-        transactionRef: txnRef,
-        checkoutUrl: session.url,
-        sessionId: session.id,
-      });
-      return;
     }
 
     // Branch 2: Clearly Labelled UAE AED Sandbox Payment Gateway
@@ -283,70 +289,32 @@ paymentsRouter.post('/checkout', authenticate, requireRole(['parent']), async (r
   }
 });
 
-// Verify Real Stripe Checkout Session upon redirect
-paymentsRouter.get('/stripe/verify-session', authenticate, async (req, res) => {
-  try {
-    const sessionId = String(req.query.session_id || '').trim();
-    const stripe = getStripeClient();
-    if (!stripe || !sessionId) {
-      res.status(400).json({ error: 'Stripe session verification unavailable.' });
-      return;
-    }
-
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-    const db = getDb();
-    const txn = db.get<{
-      id: number;
-      order_id: number;
-      transaction_ref: string;
-      status: string;
-    }>('SELECT id, order_id, transaction_ref, status FROM payment_transactions WHERE provider_session_id = ?', session.id);
-
-    if (!txn) {
-      res.status(404).json({ error: 'Matching payment transaction not found.' });
-      return;
-    }
-
-    if (session.payment_status === 'paid' && txn.status !== 'succeeded') {
-      db.transaction(() => {
-        db.run(
-          `UPDATE payment_transactions SET status = 'succeeded', updated_at = datetime('now') WHERE id = ?`,
-          txn.id
-        );
-        db.run(
-          `UPDATE orders SET payment_status = 'paid', order_status = 'confirmed', updated_at = datetime('now') WHERE id = ?`,
-          txn.order_id
-        );
-        issueOrderQrToken(db, txn.order_id);
-        recordOrderStatusChange(db, {
-          orderId: txn.order_id,
-          previousStatus: 'awaiting_payment',
-          newStatus: 'confirmed',
-          changedByUserId: req.user!.id,
-          note: `Stripe AED payment verified (${txn.transaction_ref})`,
-        });
-      });
-
-      const ord = db.get<{ placed_by_user_id: number; beneficiary_user_id: number; order_number: string }>(
-        'SELECT placed_by_user_id, beneficiary_user_id, order_number FROM orders WHERE id = ?',
-        txn.order_id
-      );
-      if (ord) {
-        eventHub.broadcast(
-          'order.created',
-          { orderId: txn.order_id, orderNumber: ord.order_number, orderStatus: 'confirmed', paymentStatus: 'paid' },
-          { roles: ['chef', 'admin'], userIds: [ord.placed_by_user_id, ord.beneficiary_user_id] }
-        );
-      }
-    }
-
-    res.json({
-      paymentStatus: session.payment_status,
-      order: formatOrderRecord(txn.order_id, req.user!.role),
-    });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Failed to verify Stripe session.' });
+// Only signed test-mode Stripe events may settle test orders. Live events are rejected.
+paymentsRouter.post('/stripe/webhook', (req, res) => {
+  if (!stripeTestReady()) { res.status(503).json({ error: 'Stripe test webhook is not configured.' }); return; }
+  const signature = req.headers['stripe-signature'];
+  if (typeof signature !== 'string' || !Buffer.isBuffer(req.body)) {
+    res.status(400).json({ error: 'A Stripe signature and raw request body are required.' }); return;
   }
+  let event: Stripe.Event;
+  try { event = getStripeTestClient().webhooks.constructEvent(req.body, signature, config.stripeWebhookSecret); }
+  catch { res.status(400).json({ error: 'Invalid Stripe signature.' }); return; }
+  if (event.livemode !== false) { res.status(400).json({ error: 'Live payment events are not enabled.' }); return; }
+  try {
+    if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
+      settleStripeTestSession(event.data.object as Stripe.Checkout.Session);
+    }
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Stripe test event could not be settled:', error);
+    res.status(500).json({ error: 'Unable to reconcile this Stripe test event.' });
+  }
+});
+
+// Existing Stripe transactions require provider-side reconciliation. The old GET
+// endpoint mutated an ephemeral snapshot and did not provide reliable confirmation.
+paymentsRouter.get('/stripe/verify-session', authenticate, (_req, res) => {
+  res.status(503).json({ error: 'Real payment verification is unavailable. Please contact an administrator for reconciliation.' });
 });
 
 // Resolve Pending Sandbox Transaction (Authorize or Fail)
@@ -383,6 +351,10 @@ paymentsRouter.post(
         return;
       }
 
+      if (txn.provider !== 'brs_sandbox_aed' || getPaymentMode(db) !== 'test') {
+        res.status(409).json({ error: 'Only test-mode sandbox transactions can be simulated.' });
+        return;
+      }
       if (txn.status !== 'pending') {
         res.status(400).json({ error: `Transaction is already ${txn.status}.` });
         return;
@@ -537,10 +509,15 @@ paymentsRouter.post('/:transactionId/refund', authenticate, requireRole(['admin'
       order_id: number;
       status: string;
       amount_fils: number;
+      provider: string;
     }>('SELECT * FROM payment_transactions WHERE id = ?', txnId);
 
     if (!txn) {
       res.status(404).json({ error: 'Transaction not found.' });
+      return;
+    }
+    if (txn.provider !== 'brs_sandbox_aed') {
+      res.status(409).json({ error: 'A real payment cannot be refunded here yet. Reconcile and refund it through the payment provider.' });
       return;
     }
     if (txn.status !== 'succeeded') {

@@ -5,6 +5,7 @@ import { authenticate, requireRole, type UserRole } from '../middleware/auth.js'
 import { aedToFils, filsToAed, formatAed } from '../services/money.js';
 import { logAdminActivity } from '../services/audit.js';
 import { eventHub } from '../services/events.js';
+import { getPaymentMode, stripeTestReady, LIVE_PAYMENTS_BLOCKED_REASON } from '../services/payment-mode.js';
 
 export const adminRouter = Router();
 
@@ -1131,6 +1132,36 @@ adminRouter.get('/reports/export', (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(csv);
+});
+
+// Only an authenticated administrator may change the site-wide payment mode.
+adminRouter.get('/payment-mode', (_req, res) => {
+  res.json({ mode: getPaymentMode(getDb()), stripeTestAvailable: stripeTestReady(), liveAvailable: false, liveBlockedReason: LIVE_PAYMENTS_BLOCKED_REASON });
+});
+
+adminRouter.put('/payment-mode', (req, res) => {
+  const mode = req.body?.mode;
+  if (mode !== 'test' && mode !== 'stripe_test' && mode !== 'live') {
+    res.status(400).json({ error: 'Choose simulated test, Stripe test, or live payment mode.' });
+    return;
+  }
+  if (mode === 'live') {
+    res.status(409).json({ error: LIVE_PAYMENTS_BLOCKED_REASON });
+    return;
+  }
+  if (mode === 'stripe_test' && !stripeTestReady()) {
+    res.status(409).json({ error: 'Stripe test checkout needs a test secret key, test webhook signing secret, and a valid public URL.' });
+    return;
+  }
+  const db = getDb();
+  db.transaction(() => {
+    db.run(`INSERT INTO platform_settings (key, value, updated_by, updated_at)
+      VALUES ('payment_mode', ?, ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = datetime('now')`, mode, req.user!.id);
+    logAdminActivity(db, { actorUserId: req.user!.id, action: 'SET_PAYMENT_MODE', targetType: 'settings', targetId: 'payment_mode', details: { mode }, ipAddress: req.ip });
+  });
+  eventHub.broadcast('settings.updated', { paymentMode: mode });
+  res.json({ mode, stripeTestAvailable: stripeTestReady(), liveAvailable: false, liveBlockedReason: LIVE_PAYMENTS_BLOCKED_REASON });
 });
 
 // 4. Platform Settings & Activity Logs

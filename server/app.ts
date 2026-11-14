@@ -13,6 +13,7 @@ import { paymentsRouter } from './routes/payments.js';
 import { chefRouter } from './routes/chef.js';
 import { adminRouter } from './routes/admin.js';
 import { config } from './config.js';
+import { getPublicPaymentMode } from './services/payment-mode.js';
 
 export function createApiApp() {
   const app = express();
@@ -38,9 +39,17 @@ export function createApiApp() {
       });
   });
 
+  // Stripe signature verification must receive the exact bytes sent by Stripe.
+  app.use('/api/payments/stripe/webhook', (req, res, next) => {
+    const raw = (req as any).rawBody;
+    if (Buffer.isBuffer(raw)) { req.body = raw; next(); return; }
+    express.raw({ type: 'application/json', limit: '2mb' })(req, res, next);
+  });
+
   // Serverless-safe JSON body parser: prevents `express.json()` stream hangs on AWS Lambda / Netlify Functions
   // when `event.body` has already been buffered into `req.rawBody` or `req.body`.
   app.use((req, res, next) => {
+    if (req.path === '/api/payments/stripe/webhook') { next(); return; }
     const ct = String(req.headers['content-type'] || '').toLowerCase();
     if (!ct.includes('application/json')) {
       next();
@@ -126,7 +135,7 @@ export function createApiApp() {
     res.json({
       status: 'ok',
       service: 'Bright Riders School – Digital Canteen Solution',
-      paymentMode: config.isStripeConfigured ? 'stripe' : 'brs_sandbox_aed',
+      paymentMode: getPublicPaymentMode(getDb()),
       timestamp: new Date().toISOString(),
     });
   });

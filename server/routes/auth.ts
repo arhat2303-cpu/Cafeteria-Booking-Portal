@@ -10,6 +10,7 @@ import {
 } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { filsToAed } from '../services/money.js';
+import { getPublicPaymentMode } from '../services/payment-mode.js';
 
 export const authRouter = Router();
 
@@ -32,8 +33,8 @@ function getPlatformPublicSettings() {
     currencyCode: map.currency_code || config.currencyCode,
     cancellationCutoffMinutes: Number(map.cancellation_cutoff_minutes || 60),
     collectionSlots,
-    paymentMode: config.isStripeConfigured ? 'stripe' : 'brs_sandbox_aed',
-    stripePublishableKey: config.isStripeConfigured ? config.stripePublishableKey : null,
+    paymentMode: getPublicPaymentMode(db),
+    stripePublishableKey: null,
   };
 }
 

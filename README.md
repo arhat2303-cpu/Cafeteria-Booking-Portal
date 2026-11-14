@@ -1,6 +1,6 @@
 # Bright Riders Digital Canteen — School Food Ordering & Payment Portal
 
-A complete, production-ready, full-stack cashless school food ordering, digital AED payment, kitchen preparation, and single-use QR meal collection portal built for **Bright Riders School (Abu Dhabi, UAE)**.
+A school food ordering, kitchen preparation, and QR collection portal for **Bright Riders School (Abu Dhabi, UAE)**. **Payments are test-only; do not use it to collect real money.**
 
 ---
 
@@ -20,7 +20,7 @@ A complete, production-ready, full-stack cashless school food ordering, digital 
 ## 2. Technology Stack & Architecture
 
 - **Frontend**: React 18, TypeScript, Vite 5, Tailwind CSS (Dark Obsidian Blueprint-Grid design system), Lucide Icons, `qrcode`, `jsqr` (WebRTC camera & canvas QR decoder), custom SVG data visualisations, and real-time Server-Sent Events (`EventSource`) with serverless polling fallback.
-- **Backend**: Node.js 22, Express 4, TypeScript (`tsx`), `bcryptjs` (12-round password hashing), `jsonwebtoken` + `user_sessions` revocation table, `busboy` (multipart upload with binary magic-byte verification), and `stripe` (official Stripe SDK for UAE AED Checkout).
+- **Backend**: Node.js 22, Express 4, TypeScript (`tsx`), `bcryptjs` (12-round password hashing), `jsonwebtoken` + `user_sessions` revocation table, `busboy` (multipart upload with binary magic-byte verification), and the Stripe SDK (hosted test checkout only; live payments disabled).
 - **Database**: Persistent relational **SQLite** running on the **self-contained `sql.js` WebAssembly engine** (`sql-wasm-inline.js`, SQLite 3 compiled to WASM with the binary embedded in the bundle). It needs **zero native addons and zero experimental Node modules**, so it runs identically on Node 18, 20, 22, AWS Lambda and Netlify Functions. ACID `BEGIN IMMEDIATE` transactions, `foreign_keys = ON`, atomic temp-file-then-rename disk writes locally, and automatic binary snapshot persistence through **Netlify Blobs** when deployed serverlessly.
 
 ### Core Database Tables (`server/db/schema.sql`)
@@ -44,7 +44,7 @@ A complete, production-ready, full-stack cashless school food ordering, digital 
 
 ---
 
-## 3. Security, Permanent Admin Bootstrap & Zero Demo Content
+## 3. Security, Administrator Bootstrap & Demo Accounts
 
 - **Demo accounts and clean initialization**: Fresh initialization creates the two permanent administrators, the requested Shashi administrator, and one demo account for each of Student, Parent and Chef. Select the matching portal and use username `12345`, password `abcd`. Demo accounts are intentionally weak and must not be used for real users or sensitive data. No demo orders or payments are created.
 - **Zero Plaintext Secrets**: No passwords, API keys, or secrets exist in frontend code or committed repository files, and no administrator credentials are ever displayed on the website.
@@ -53,22 +53,17 @@ A complete, production-ready, full-stack cashless school food ordering, digital 
 
 ---
 
-## 4. Digital Payment Configuration (Stripe UAE AED + Sandbox Mode)
+## 4. Payments: test mode only
 
-### Option A: UAE AED Sandbox Mode (Default when `STRIPE_SECRET_KEY` is blank)
-When no live Stripe credentials are configured, checkout operates as a **clearly labelled UAE AED Sandbox Payment Environment**:
-- Supports testing **Authorized Payment (`succeeded`)**, **Declined Authorization (`failed`)**, and **Pending Bank Authorization (`pending`)**.
-- Enforces idempotency and duplicate-payment prevention (`409 Conflict`).
-- Supports Parent pre-preparation cancellations with automatic refund status updates, as well as Administrator refunds.
+The administrator **Payment Management → Launch test mode** button enables site-wide simulated payments. **Try Stripe test checkout** enables Stripe-hosted test checkout for cards and eligible Apple Pay devices, after configuring a Stripe test account. Neither mode collects money, and test orders and QR codes are only for demonstrations. Do not fulfil test orders as real purchases.
 
-### Option B: Live / Test Stripe UAE AED Gateway
-To connect real Stripe Checkout in **UAE Dirhams (`AED`)**, add the following keys to `.env` (or Netlify Environment Variables):
-```env
-STRIPE_SECRET_KEY=sk_live_or_test_...
-STRIPE_PUBLISHABLE_KEY=pk_live_or_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-PUBLIC_APP_URL=https://your-school-domain.ae
-```
+To try hosted checkout, configure `STRIPE_SECRET_KEY` with a **test** key, `STRIPE_WEBHOOK_SECRET` with its **test-mode** signing secret, and `PUBLIC_APP_URL` with the public HTTPS site URL. In Stripe's test dashboard register `https://YOUR-SITE/api/payments/stripe/webhook` for `checkout.session.completed` and `checkout.session.async_payment_succeeded`. The app verifies the signature and test status; a redirect alone never marks an order paid. Use test cards, never real card details. Apple Pay is shown by Stripe only on eligible devices and accounts. Webhook delivery must reach this deployed site. A test checkout awaiting reconciliation cannot be automatically cancelled or retried after expiry; contact an administrator.
+
+Run `npm run test:stripe` for mocked checkout and signed-webhook regression tests. This does not prove a real Stripe account or deployment is configured.
+
+**Live checkout is disabled**, even if Stripe keys are present. The previous Stripe integration could mark an order paid or refunded without a durable, verified provider confirmation. Before accepting real money, the application needs a transactional shared database, live-provider webhook and reconciliation support, real provider refunds, test/live data separation, and end-to-end testing with an approved merchant account. The signed webhook and settlement implemented here accept test events only. Existing Stripe transactions must be reconciled and refunded with the provider, not marked refunded in this application.
+
+Stripe supports Apple Pay for eligible UAE merchants and customers. Its documented Samsung Pay online integration requires South Korean customers and KRW, so it cannot be promised for this AED checkout; a UAE payment provider with confirmed Samsung Pay support is needed. Wallet availability depends on provider approval, browser and device.
 
 ---
 
@@ -133,7 +128,7 @@ This repository is pre-configured to deploy out-of-the-box on **Netlify** via [`
 3. Strongly recommended production environment variables in **Netlify → Site configuration → Environment variables**:
    - `JWT_SECRET` — strong random 64-character secret
    - `QR_HMAC_SECRET` — strong random 64-character secret
-   - *(Optional)* `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
+   - Stripe variables do not enable live payments in this version.
 4. Click **Deploy site** — all 4 role portals, the administrator accounts, and the 28-item Bright Riders SEHHI menu persist automatically via `@netlify/blobs`.
 
 ### Shared database and account reset

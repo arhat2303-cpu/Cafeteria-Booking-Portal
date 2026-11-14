@@ -181,6 +181,9 @@ export const ChefDashboard: React.FC = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-5 space-y-5">
+        <div role="status" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-950">
+          TEST PAYMENTS ONLY — simulated and Stripe test orders and QR codes do not represent real payment. Check the ledger before fulfilling any order.
+        </div>
         {/* Status Counter Tabs (Large Touch Targets for Tablets & Phones) */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
           {(

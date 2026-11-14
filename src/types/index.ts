@@ -58,7 +58,7 @@ export interface PlatformSettings {
   currencyCode: string;
   cancellationCutoffMinutes: number;
   collectionSlots: CollectionSlotOption[];
-  paymentMode: 'stripe' | 'brs_sandbox_aed';
+  paymentMode: 'stripe_test' | 'brs_sandbox_aed' | 'unavailable';
   stripePublishableKey?: string | null;
 }
 

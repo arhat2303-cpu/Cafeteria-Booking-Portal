@@ -17,7 +17,8 @@
     "verify:serverless": "node scripts/verify-netlify-bundle.mjs",
     "verify:blobs": "node scripts/verify-blobs-persistence.mjs && node scripts/verify-blobs-persistence.mjs --lambda-event",
     "verify:login-ui": "node scripts/verify-login-ui.mjs",
-    "verify": "npm run build && npm run verify:serverless && npm run verify:blobs && npm run verify:login-ui"
+    "verify": "npm run build && npm run verify:serverless && npm run verify:blobs && npm run verify:login-ui && npm run test:stripe",
+    "test:stripe": "NODE_ENV=test STRIPE_SECRET_KEY=sk_test_fixture STRIPE_WEBHOOK_SECRET=whsec_fixture PUBLIC_APP_URL=http://localhost:3000 tsx tests/stripe-test-checkout.test.ts"
   },
   "dependencies": {
     "@netlify/blobs": "^11.1.8",

@@ -72,21 +72,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshSession();
   }, [refreshSession]);
 
-  // Verify Stripe redirect session automatically if returning from Stripe Checkout
-  useEffect(() => {
-    if (!user) return;
-    const params = new URLSearchParams(window.location.search);
-    const stripeSessionId = params.get('stripe_session_id');
-    if (stripeSessionId) {
-      apiFetch(`/api/payments/stripe/verify-session?session_id=${encodeURIComponent(stripeSessionId)}`)
-        .catch(() => {})
-        .finally(() => {
-          const cleanUrl = window.location.pathname;
-          window.history.replaceState({}, '', cleanUrl);
-        });
-    }
-  }, [user]);
-
   const login = useCallback(
     async (username: string, password: string, expectedRole?: UserRole) => {
       const data = await apiFetch<{
